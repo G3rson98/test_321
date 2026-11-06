@@ -20,7 +20,8 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { NotFoundPage } from '@/components/layout/error-pages';
 import { catalogApi } from '@/lib/api/endpoints';
-import type { CaseDetail, History } from '@/lib/api/types';
+import type { AutomatedTest, CaseDetail, History } from '@/lib/api/types';
+import { sectionNameMap, useCaseAutomation } from '@/features/common/derived';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { useCan } from '@/lib/auth/session';
@@ -46,6 +47,9 @@ export function CasePage() {
   const [generateOpen, setGenerateOpen] = useState(false);
 
   const c = useQuery({ queryKey: qk.catalog.case(caseId), queryFn: ({ signal }) => catalogApi.case(caseId, signal) });
+  const sections = useQuery({ queryKey: qk.catalog.sections(), queryFn: ({ signal }) => catalogApi.sections({}, signal) });
+  // Etiquetas/clasificación/flaky vienen de los tests vinculados (`GET /tests?caseId=`), no del caso de TestRail.
+  const auto = useCaseAutomation(c.data ? [c.data] : []).get(caseId) ?? { tags: [], classification: null, flaky: null };
   const history = useQuery({
     queryKey: qk.catalog.caseHistory(caseId, { limit: 20 }),
     queryFn: ({ signal }) => catalogApi.caseHistory(caseId, { limit: 20 }, signal),
@@ -57,9 +61,9 @@ export function CasePage() {
   if (c.isLoading || !c.data) return <CaseSkeleton />;
 
   const kase = c.data;
+  const classification = auto.classification;
   const needsReview = kase.links.some((l) => l.reviewStatus === 'requiere_revision');
   const hasTest = kase.links.length > 0;
-  const classification = kase.classification ?? null;
   const highlightRecord = !hasTest || needsReview;
   const archived = !!kase.archivedAt;
 
@@ -67,7 +71,7 @@ export function CasePage() {
     <>
       <PageHeader
         title={`${kase.ref} · ${kase.title}`}
-        subtitle={`${kase.sectionName ?? 'Sin sección'} · Prioridad ${kase.priority ?? '—'} · Clasificación ${classification ? CLASSIFICATION_LABEL[classification] : '-'}`}
+        subtitle={`${sectionNameMap(sections.data?.items).get(kase.sectionId) ?? 'Sin sección'} · Prioridad ${kase.priority ?? '—'} · Clasificación ${classification ? CLASSIFICATION_LABEL[classification] : '-'}`}
         className="mb-6"
         actions={
           <>
@@ -106,7 +110,7 @@ export function CasePage() {
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        {(kase.tags ?? []).map((t) => (
+        {auto.tags.map((t) => (
           <TagChip key={t} tag={t} className="h-[22px] text-[11px]" />
         ))}
         <StatusBadge status={lastResultLabel(kase.lastResult?.status)} />
@@ -214,7 +218,6 @@ function LinkedTests({ kase, selectedTestId, onSelect }: { kase: CaseDetail; sel
   const links = kase.links;
   const activeId = links.find((l) => l.automatedTestId === selectedTestId)?.automatedTestId ?? links[0]?.automatedTestId;
   const test = useQuery({ queryKey: qk.catalog.test(activeId ?? ''), queryFn: ({ signal }) => catalogApi.test(activeId!, signal), enabled: !!activeId });
-  const source = useQuery({ queryKey: qk.catalog.testSource(activeId ?? ''), queryFn: ({ signal }) => catalogApi.testSource(activeId!, signal), enabled: !!activeId, retry: false });
 
   if (links.length === 0) {
     return (
@@ -226,8 +229,8 @@ function LinkedTests({ kase, selectedTestId, onSelect }: { kase: CaseDetail; sel
   const t = test.data;
   return (
     <CardSection
-      title={`Test vinculado · ${t?.filePath ?? source.data?.filePath ?? '…'}`}
-      meta={source.data?.commit ?? (t?.manifestCommit ? `main@${t.manifestCommit.slice(0, 7)}` : undefined)}
+      title={`Test vinculado · ${t?.filePath ?? '…'}`}
+      meta={t?.manifestCommit ? `main@${t.manifestCommit.slice(0, 7)}` : undefined}
       padded={false}
       bodyClassName="overflow-hidden rounded-b-lg"
     >
@@ -251,20 +254,38 @@ function LinkedTests({ kase, selectedTestId, onSelect }: { kase: CaseDetail; sel
           Test {TEST_STATUS_LABEL[t.status].toLowerCase()}: no se ejecuta en corridas normales.
         </div>
       ) : null}
-      {source.isLoading ? (
+      {test.isLoading ? (
         <Skeleton className="m-5 h-40" />
-      ) : source.isError ? (
-        <div className="bg-code-bg px-5 py-6 text-[13px] text-[#aaabb2]">
-          {isApiError(source.error) && source.error.status === 404 ? 'El código del test aún no está disponible desde la API.' : errorMessage(source.error)}
-          {t ? <div className="mt-2 font-mono text-code-fg">{t.title}</div> : null}
-        </div>
-      ) : source.data ? (
-        <Suspense fallback={<Skeleton className="m-5 h-40" />}>
-          <CodeViewer code={source.data.code} className="min-h-[196px]" />
-        </Suspense>
+      ) : test.isError ? (
+        <div className="bg-code-bg px-5 py-6 text-[13px] text-[#aaabb2]">{errorMessage(test.error)}</div>
+      ) : t ? (
+        <>
+          <Suspense fallback={<Skeleton className="m-5 h-40" />}>
+            <CodeViewer code={manifestSnippet(t)} className="min-h-[196px]" />
+          </Suspense>
+          {/* PENDIENTE [WEB→API-A]: `GET /tests/:id/source` (código sanitizado del commit aprobado). */}
+          <p className="border-t border-border px-5 py-2 text-[12.5px] text-muted-foreground">Metadatos del manifiesto. El código fuente completo se revisa en el repositorio de qa-tests.</p>
+        </>
       ) : null}
     </CardSection>
   );
+}
+
+/** Resumen legible del test a partir del manifiesto (datos reales de `GET /tests/:id`, no código inventado). */
+function manifestSnippet(t: AutomatedTest): string {
+  return [
+    `// ${t.filePath}${t.manifestCommit ? ` · main@${t.manifestCommit.slice(0, 7)}` : ''}`,
+    `test('${t.title.replace(/'/g, "\\'")}', {`,
+    `  tag: ${JSON.stringify(t.tags)},`,
+    `  annotation: [`,
+    `    { type: 'katalyst.stableKey', description: '${t.stableKey}' },`,
+    `    { type: 'clasificacion', description: '${t.classification}' },`,
+    `  ],`,
+    `}${t.parameterKeys.length ? ` /* parámetros: ${t.parameterKeys.join(', ')} */` : ''});`,
+    t.owner ? `// responsable: ${t.owner}` : null,
+  ]
+    .filter((l): l is string => l !== null)
+    .join('\n');
 }
 
 function HistoryCard({ history, loading, error, onRetry }: { history: History | undefined; loading: boolean; error: unknown; onRetry: () => void }) {

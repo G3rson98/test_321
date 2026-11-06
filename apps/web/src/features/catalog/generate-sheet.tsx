@@ -64,6 +64,17 @@ export function GenerateSheet({ kase, onClose }: { kase: CaseDetail; onClose: ()
             <Suspense fallback={<Skeleton className="h-48" />}>
               <CodeViewer code={g.result.code} className="rounded-md" label="Borrador generado" />
             </Suspense>
+            {g.result.prUrl || g.result.branch || g.result.file ? (
+              <p className="text-[13px] text-muted-foreground">
+                {g.result.file ? <span className="font-mono">{g.result.file}</span> : null}
+                {g.result.branch ? <span className="font-mono"> · {g.result.branch}</span> : null}
+                {g.result.prUrl ? (
+                  <a href={g.result.prUrl} target="_blank" rel="noreferrer noopener" className="ml-2 font-medium text-primary">
+                    Ver PR
+                  </a>
+                ) : null}
+              </p>
+            ) : null}
             <div className="flex items-center justify-between text-[12px] text-muted-foreground">
               <span className="font-mono">
                 {g.provider} · {g.model} · prompt {g.promptVersion}

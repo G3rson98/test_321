@@ -29,7 +29,8 @@ export const catalogSearch = z.object({
     .optional()
     .catch(undefined),
   q: optStr(200),
-  estado: z.enum(['pasado', 'fallido', 'inestable', 'bloqueado', 'sin_ejecutar']).optional().catch(undefined),
+  // Estados de `case_result` que acepta `lastResult` en GET /testrail/cases (la API no filtra "sin ejecutar").
+  estado: z.enum(['pasado', 'fallido', 'inestable', 'bloqueado']).optional().catch(undefined),
   automatizacion: z.enum(['automatizado', 'sin_test']).optional().catch(undefined),
   sort: z.enum(['title', '-title', 'trCaseId', '-trCaseId', 'syncedAt', '-syncedAt']).default('trCaseId').catch('trCaseId'),
   cursor,

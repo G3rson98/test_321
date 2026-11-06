@@ -31,7 +31,7 @@ import { applyServerErrors, firstError } from '@/lib/form';
 import { useDebouncedValue } from '@/lib/hooks';
 import { selection } from '@/lib/stores/selection';
 import { useCan } from '@/lib/auth/session';
-import { DEFAULT_TAGS } from '@/features/catalog/catalog-page';
+import { useCasesByIds, useKnownTags } from '@/features/common/derived';
 
 const editRoute = getRouteApi('/_app/suites/$suiteId');
 
@@ -279,8 +279,8 @@ function SuiteForm({ suite, initialCases }: { suite: Suite | null; initialCases:
 }
 
 function TagPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
-  const tags = useQuery({ queryKey: qk.catalog.tags(), queryFn: ({ signal }) => catalogApi.tags(signal), retry: false });
-  const options = Array.from(new Set([...(tags.data?.items ?? DEFAULT_TAGS), ...value]));
+  const known = useKnownTags();
+  const options = Array.from(new Set([...known, ...value]));
   return (
     <div className="flex flex-wrap gap-1.5">
       {options.map((t) => (
@@ -291,7 +291,7 @@ function TagPicker({ value, onChange }: { value: string[]; onChange: (v: string[
 }
 
 function SectionPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
-  const sections = useQuery({ queryKey: qk.catalog.sections(), queryFn: ({ signal }) => catalogApi.sections(signal) });
+  const sections = useQuery({ queryKey: qk.catalog.sections(), queryFn: ({ signal }) => catalogApi.sections({}, signal) });
   const tops = itemsOf(sections.data).filter((s) => !s.parentId);
   return (
     <div className="grid gap-2 sm:grid-cols-2">
@@ -316,14 +316,8 @@ export function CasePicker({ value, onChange }: { value: string[]; onChange: (v:
     enabled: term.length >= 2,
   });
   const missing = useMemo(() => value.filter((id) => !labels[id]), [value, labels]);
-  // PENDIENTE [WEB→API-A]: filtro `ids` en /testrail/cases para mostrar etiquetas de una selección traída del catálogo.
-  const known = useQuery({
-    queryKey: qk.catalog.cases({ ids: missing.slice(0, 100) }),
-    queryFn: ({ signal }) => catalogApi.cases({ ids: missing.slice(0, 100), limit: 100 }, signal),
-    enabled: missing.length > 0,
-    retry: false,
-  });
-  const labelOf = (id: string) => labels[id] ?? known.data?.items.find((c) => c.id === id)?.ref ?? id.slice(0, 8);
+  const known = useCasesByIds(missing);
+  const labelOf = (id: string) => labels[id] ?? known.get(id)?.ref ?? id.slice(0, 8);
   return (
     <div className="space-y-3">
       <div className="relative">

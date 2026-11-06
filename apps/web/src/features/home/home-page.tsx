@@ -14,15 +14,15 @@ import { KpiCard, KpiGrid } from '@/components/common/kpi-card';
 import { Callout } from '@/components/common/misc';
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { DataTable } from '@/components/data-table/data-table';
-import { alertsApi, dashboardApi, runsApi } from '@/lib/api/endpoints';
+import { alertsApi, runsApi } from '@/lib/api/endpoints';
 import type { RunSummary } from '@/lib/api/types';
-import { isApiError } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { useCan, useSession } from '@/lib/auth/session';
 import { formatDateTimeShort, formatLongDate, formatPercent, formatSeconds, formatTime, getDisplayTimezone, greeting } from '@/lib/format';
 import { firstName } from '@/lib/utils';
 import { usePollingFallback } from '@/lib/sse/polling';
 import { RunCounts, RunIdLink, RunOrigin, RunState } from '@/features/runs/run-cells';
+import { formatCount, useCoverage, useRunCounts, useSuccessRates, useUpcoming } from './home-data';
 
 const columns: ColumnDef<RunSummary>[] = [
   { id: 'id', header: 'ID', cell: ({ row }) => <RunIdLink run={row.original} /> },
@@ -39,7 +39,10 @@ export function HomePage() {
   const poll = usePollingFallback('list');
   const now = new Date();
 
-  const summary = useQuery({ queryKey: qk.dashboard(), queryFn: ({ signal }) => dashboardApi.summary(signal), refetchInterval: poll });
+  const rates = useSuccessRates(poll);
+  const counts = useRunCounts(poll);
+  const coverage = useCoverage();
+  const upcoming = useUpcoming();
   const recent = useQuery({
     queryKey: qk.runs.list({ limit: 5, sort: '-createdAt' }),
     queryFn: ({ signal }) => runsApi.list({ limit: 5, sort: '-createdAt' }, signal),
@@ -50,10 +53,8 @@ export function HomePage() {
     queryFn: ({ signal }) => alertsApi.list({ status: 'activa', limit: 10 }, signal),
   });
 
-  const s = summary.data;
-  const summaryMissing = summary.isError && isApiError(summary.error) && summary.error.status === 404;
   const perfAlerts = (alerts.data?.items ?? []).filter((a) => a.kind === 'umbral_rendimiento');
-  const delta = s && s.successRate7d !== null && s.successRatePrev7d !== null ? Math.round((s.successRate7d - s.successRatePrev7d) * 100) : null;
+  const delta = rates.current !== null && rates.previous !== null ? Math.round((rates.current - rates.previous) * 100) : null;
   const firstAlert = perfAlerts[0];
   const p = firstAlert?.payload as { label?: string; value?: number; limit?: number; at?: string } | undefined;
 
@@ -74,23 +75,23 @@ export function HomePage() {
       <KpiGrid>
         <KpiCard
           label="Éxito 7 días"
-          loading={summary.isLoading}
-          tone={s?.successRate7d !== null && s?.successRate7d !== undefined ? 'passed' : 'default'}
-          value={s?.successRate7d !== null && s?.successRate7d !== undefined ? formatPercent(s.successRate7d) : '—'}
-          hint={summary.isError ? (summaryMissing ? 'Resumen no disponible' : 'No se pudo cargar') : delta !== null ? `${delta >= 0 ? '+' : ''}${delta} pts vs semana anterior` : 'sin datos en 7 días'}
+          loading={rates.isLoading}
+          tone={rates.current !== null ? 'passed' : 'default'}
+          value={rates.current !== null ? formatPercent(rates.current) : '—'}
+          hint={rates.isError ? 'No se pudo cargar' : delta !== null ? `${delta >= 0 ? '+' : ''}${delta} pts vs semana anterior` : rates.current === null ? 'sin datos en 7 días' : 'sin datos de la semana anterior'}
         />
         <KpiCard
           label="Ejecuciones hoy"
-          loading={summary.isLoading}
-          value={s ? s.runsToday : '—'}
-          hint={s ? `${s.runningNow} corriendo ahora` : ' '}
+          loading={counts.isLoading}
+          value={counts.today ? formatCount(counts.today) : '—'}
+          hint={counts.isError ? 'No se pudo cargar' : counts.running ? `${formatCount(counts.running)} corriendo ahora` : ' '}
           href="/ejecuciones"
         />
         <KpiCard
           label="Cobertura automatizada"
-          loading={summary.isLoading}
-          value={s ? `${s.coverage.automated}/${s.coverage.total}` : '—'}
-          hint="casos de TestRail con test"
+          loading={coverage.isLoading}
+          value={coverage.data ? `${coverage.data.automated}/${coverage.data.total}${coverage.data.more ? '+' : ''}` : '—'}
+          hint={coverage.isError ? 'No se pudo cargar' : 'casos de TestRail con test'}
           href="/catalogo"
         />
         <KpiCard
@@ -156,15 +157,15 @@ export function HomePage() {
             </Link>
           }
         >
-          {summary.isLoading ? (
+          {upcoming.isLoading ? (
             <div className="space-y-4 p-5">
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
-          ) : summary.isError ? (
-            <ErrorState error={summary.error} onRetry={() => void summary.refetch()} compact />
-          ) : (s?.upcoming.length ?? 0) === 0 ? (
+          ) : upcoming.isError ? (
+            <ErrorState error={upcoming.error} onRetry={() => void upcoming.refetch()} compact />
+          ) : upcoming.items.length === 0 ? (
             <EmptyState
               title="No hay programaciones activas"
               action={
@@ -175,7 +176,7 @@ export function HomePage() {
             />
           ) : (
             <ul>
-              {s!.upcoming.map((u) => (
+              {upcoming.items.map((u) => (
                 <li key={`${u.scheduleId}-${u.at}`} className="border-b border-border last:border-0">
                   <Link
                     to="/programaciones/$scheduleId"

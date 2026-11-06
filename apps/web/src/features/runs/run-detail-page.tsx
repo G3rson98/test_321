@@ -242,12 +242,28 @@ function useRunResults(runId: string, active: boolean) {
   };
 }
 
+/** Referencias `C123` por caseId desde `GET /runs/:id/case-results` (RunResult solo trae `caseIds`). */
+function useCaseRefs(runId: string, active: boolean) {
+  const poll = usePollingFallback('detail', active);
+  const q = useQuery({ queryKey: qk.runs.caseResults(runId), queryFn: ({ signal }) => runsApi.caseResults(runId, { limit: 100 }, signal), refetchInterval: poll });
+  return useMemo(() => new Map((q.data?.items ?? []).map((c) => [c.caseId, c.ref])), [q.data]);
+}
+const refsOf = (refs: Map<string, string>, r: Pick<RunResult, 'caseIds'>) => r.caseIds.map((id) => refs.get(id)).filter((x): x is string => !!x);
+
+/** Último error sanitizado del test (está en el intento, `TestAttempt.error`). */
+function LastAttemptError({ runId, resultId }: { runId: string; resultId: string }) {
+  const q = useQuery({ queryKey: qk.runs.attempts(runId, resultId), queryFn: ({ signal }) => runsApi.attempts(runId, resultId, signal) });
+  const last = [...(q.data?.items ?? [])].reverse().find((a) => a.error);
+  return last?.error ? <>{last.error}</> : null;
+}
+
 function TestResults({ runId, active, selected, onSelect }: { runId: string; active: boolean; selected: string | undefined; onSelect: (id: string) => void }) {
   const { results, pager } = useRunResults(runId, active);
+  const refs = useCaseRefs(runId, active);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const columns = useMemo<ColumnDef<RunResult>[]>(
     () => [
-      { id: 'caso', header: 'Caso', cell: ({ row }) => <MonoId>{(row.original.caseRefs ?? []).join(', ') || '–'}</MonoId> },
+      { id: 'caso', header: 'Caso', cell: ({ row }) => <MonoId>{refsOf(refs, row.original).join(', ') || '–'}</MonoId> },
       { id: 'test', header: 'Test', cell: ({ row }) => <span>{row.original.title}</span> },
       {
         id: 'intentos',
@@ -281,7 +297,7 @@ function TestResults({ runId, active, selected, onSelect }: { runId: string; act
       { id: 'duracion', header: 'Duración', cell: ({ row }) => <span className="font-mono text-[13px]">{formatSeconds(row.original.durationMs)}</span> },
       { id: 'estado', header: 'Estado', cell: ({ row }) => <StatusBadge status={RESULT_STATUS_LABEL[row.original.status]} /> },
     ],
-    [expanded],
+    [expanded, refs],
   );
   const items = results.data?.items;
   const effectiveSelected = selected ?? items?.find((x) => x.status === 'fallido')?.id ?? null;
@@ -300,7 +316,7 @@ function TestResults({ runId, active, selected, onSelect }: { runId: string; act
         onRowClick={(x) => onSelect(x.id)}
         empty={{ title: 'Aún no hay resultados', description: 'Aparecerán cuando el ejecutor empiece.' }}
         renderSubRow={(x) => {
-          const err = x.lastError ?? (x.reason ? `${reasonLabel(x.reason)}${x.reasonText ? ` — ${x.reasonText}` : ''}` : null);
+          const err = x.status === 'fallido' || x.status === 'error_infraestructura' ? <LastAttemptError runId={runId} resultId={x.id} /> : x.reason ? `${reasonLabel(x.reason)}${x.reasonText ? ` — ${x.reasonText}` : ''}` : null;
           const open = expanded.has(x.id);
           if (!err && !open) return null;
           return (
@@ -387,6 +403,8 @@ function EvidenceCard({ run, resultId }: { run: RunDetail; resultId: string | un
   const results = useQuery({ queryKey: qk.runs.results(run.id, { limit: 100, cursor: undefined }), queryFn: ({ signal }) => runsApi.results(run.id, { limit: 100 }, signal) });
   const effective = resultId ?? results.data?.items.find((x) => x.status === 'fallido')?.id ?? null;
   const result = results.data?.items.find((x) => x.id === effective);
+  const refs = useCaseRefs(run.id, false);
+  const resultRefs = result ? refsOf(refs, result) : [];
   const artifacts = useQuery({
     queryKey: qk.runs.artifacts(run.id, effective),
     queryFn: ({ signal }) => runsApi.artifacts(run.id, { resultId: effective }, signal),
@@ -402,7 +420,7 @@ function EvidenceCard({ run, resultId }: { run: RunDetail; resultId: string | un
   });
   const items = itemsOf(artifacts.data).filter((a) => ['video', 'traza', 'captura', 'reporte'].includes(a.kind));
   return (
-    <CardSection title={`Evidencia${result?.caseRefs?.length ? ` (${result.caseRefs.join(', ')})` : ''}`} padded={false}>
+    <CardSection title={`Evidencia${resultRefs.length ? ` (${resultRefs.join(', ')})` : ''}`} padded={false}>
       {!effective ? (
         <EmptyState title="Selecciona un resultado para ver su evidencia" className="py-8" />
       ) : artifacts.isLoading ? (

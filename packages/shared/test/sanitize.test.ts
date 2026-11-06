@@ -297,4 +297,14 @@ describe('RNF-SEG-02 verifySanitized bloquea publicación con hallazgos', () => 
     expect(verifySanitized({ u: 'https://x.la/?token=%5BREDACTED%5D' }).ok).toBe(true);
     expect(verifySanitized('known Qa#2026', { knownSecrets: ['Qa#2026'] }).findings[0]!.kind).toBe('known_secret');
   });
+  it('D-052: código fuente con `?token=${expr}` (error-context.md de Playwright) queda verificado tras sanitizar', () => {
+    const src = 'await page.goto(`/canario?token=${encodeURIComponent(datos.accessToken)}`);';
+    const { value } = sanitizeText(src);
+    expect(value).not.toContain('encodeURIComponent(datos');
+    expect(verifySanitized(value).ok).toBe(true);
+    expect(verifySanitized(sanitizeJson({ snippet: src }).value).ok).toBe(true);
+    // Un valor real tras el marcador sigue bloqueando.
+    expect(verifySanitized('/x?token=[REDACTED]abc123').ok).toBe(false);
+    expect(verifySanitized('/x?token=[REDACTED]}secreto').ok).toBe(false);
+  });
 });

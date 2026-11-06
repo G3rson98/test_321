@@ -1,13 +1,15 @@
 /**
  * 06 · Grabación con el asistente local (RF-GRB-01/02/06, ESP §13.6). El panel nunca recibe credenciales ni
- * `storageState`; solo sigue el estado de la sesión (`GET /recordings/{id}` + SSE) y envía órdenes al asistente.
+ * `storageState`; crea la sesión, abre el asistente con `katalyst://grabar?session=<id>` y sigue su estado
+ * (`GET /recordings/{id}` + SSE). Detener, verificar y enviar el PR ocurren en el asistente (la API no expone
+ * órdenes remotas); el panel solo puede descartar (`POST /recordings/{id}/cancel`).
  * Si el asistente no está instalado/vinculado muestra instrucciones (Windows 11) sin prometer abrir Chromium.
  */
 import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CircleAlert, Download, ExternalLink, GitPullRequest, Loader2, Square, SquareCheck, Trash2 } from 'lucide-react';
+import { CircleAlert, Download, ExternalLink, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -17,7 +19,8 @@ import { Callout } from '@/components/common/misc';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { StatusBadge } from '@/components/common/status-badge';
 import { devicesApi, envApi, itemsOf, recordingsApi } from '@/lib/api/endpoints';
-import type { CaseDetail, RecordingCommand, RecordingSession } from '@/lib/api/types';
+import type { CaseDetail, RecordingSession } from '@/lib/api/types';
+import { useCaseAutomation } from '@/features/common/derived';
 import { errorMessage } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { RECORDING_STATUS_LABEL } from '@/lib/labels';
@@ -38,11 +41,18 @@ export function StartRecordingDialog({ kase, onClose, onCreated }: { kase: CaseD
   const envs = useQuery({ queryKey: qk.environments.list(), queryFn: ({ signal }) => envApi.list(signal) });
   const allowed = itemsOf(envs.data).filter((e) => e.recordingAllowed && !e.isProduction && e.enabled);
   const [envId, setEnvId] = useState<string | null>(null);
-  const [tags, setTags] = useState<string[]>(kase.tags ?? []);
+  const auto = useCaseAutomation([kase]).get(kase.id);
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const tags = picked ?? auto?.tags ?? [];
+  const setTags = (f: (p: string[]) => string[]) => setPicked(f(tags));
   const effectiveEnv = envId ?? allowed[0]?.id ?? null;
   const create = useMutation({
     mutationFn: () => recordingsApi.create({ caseId: kase.id, environmentId: effectiveEnv!, tags }),
-    onSuccess: (r) => onCreated(r.recording.id),
+    onSuccess: (r) => {
+      // El asistente se abre por protocolo con SOLO el ID de sesión (ESP §13.6); sin asistente se muestran instrucciones.
+      if (r.assistant.linked) openAssistant(r.assistantLink);
+      onCreated(r.recording.id);
+    },
     onError: (e) => toast.error(errorMessage(e)),
   });
   return (
@@ -64,14 +74,14 @@ export function StartRecordingDialog({ kase, onClose, onCreated }: { kase: CaseD
               value={effectiveEnv}
               onValueChange={setEnvId}
               className="sm:grid-cols-2"
-              items={allowed.map((e) => ({ value: e.id, title: e.name, description: <span className="font-mono">{e.appUrl ?? ''}</span> }))}
+              items={allowed.map((e) => ({ value: e.id, title: e.name, description: 'appUrl' in e ? <span className="font-mono">{e.appUrl}</span> : undefined }))}
             />
           )}
         </div>
         <div className="space-y-2">
           <Label>Etiquetas del test</Label>
           <div className="flex flex-wrap gap-1.5">
-            {Array.from(new Set([...(kase.tags ?? []), '@humo', '@rendimiento'])).map((t) => (
+            {Array.from(new Set([...(auto?.tags ?? []), '@humo', '@rendimiento'])).map((t) => (
               <FilterChip key={t} tag={t} selected={tags.includes(t)} onToggle={() => setTags((p) => (p.includes(t) ? p.filter((x) => x !== t) : [...p, t]))} />
             ))}
           </div>
@@ -102,11 +112,6 @@ export function RecordingDialog({ recordingId, caseRef, onClose }: { recordingId
   const [confirmClose, setConfirmClose] = useState(false);
   const setData = (r: RecordingSession) => qc.setQueryData(qk.recordings.detail(recordingId), r);
 
-  const command = useMutation({
-    mutationFn: (c: RecordingCommand) => recordingsApi.command(recordingId, c),
-    onSuccess: setData,
-    onError: (e) => toast.error(errorMessage(e)),
-  });
   const discard = useMutation({
     mutationFn: () => recordingsApi.cancel(recordingId),
     onSuccess: (r) => {
@@ -124,7 +129,7 @@ export function RecordingDialog({ recordingId, caseRef, onClose }: { recordingId
   const pendingVerifications = useMemo(() => r?.steps.filter((s) => s.kind === 'no_soportada').length ?? 0, [r]);
   const linked = device.data?.linked ?? false;
   const online = device.data?.online ?? false;
-  const busy = command.isPending;
+  const link = assistantLinkFor(recordingId);
 
   return (
     <Dialog
@@ -213,14 +218,11 @@ export function RecordingDialog({ recordingId, caseRef, onClose }: { recordingId
           ) : null}
           {linked && !terminal ? (
             <>
-              <Button variant="outline" disabled={busy || !online || r?.status !== 'grabando'} onClick={() => command.mutate('agregar_verificacion')}>
-                <SquareCheck /> Agregar verificación
-              </Button>
-              <Button variant="outline" disabled={busy || !online || r?.status !== 'grabando'} onClick={() => command.mutate('detener')}>
-                <Square /> Detener
-              </Button>
-              <Button disabled={busy || !online || !r || r.steps.length === 0 || r.status === 'validando'} onClick={() => command.mutate('enviar_pr')}>
-                {busy || r?.status === 'validando' ? <Loader2 className="animate-spin" /> : <GitPullRequest />} Enviar PR
+              <p className="mr-auto self-center text-[13px] text-muted-foreground">Detener, agregar verificaciones y enviar el PR se hacen en el asistente.</p>
+              <Button asChild disabled={r?.status === 'validando'}>
+                <a href={link} onClick={(e) => { e.preventDefault(); openAssistant(link); }}>
+                  {r?.status === 'validando' ? <Loader2 className="animate-spin" /> : <ExternalLink />} Abrir asistente
+                </a>
               </Button>
             </>
           ) : terminal ? (
@@ -253,6 +255,14 @@ export function RecordingDialog({ recordingId, caseRef, onClose }: { recordingId
       />
     </Dialog>
   );
+}
+
+/** Enlace del asistente: `katalyst://grabar?session=<id>` (RecordingAssistantLinkSchema, solo el ID). */
+export function assistantLinkFor(recordingId: string): string {
+  return `katalyst://grabar?session=${encodeURIComponent(recordingId)}`;
+}
+function openAssistant(link: string): void {
+  window.location.assign(link);
 }
 
 function AssistantMissing({ installUrl, recordingId }: { installUrl: string | null; recordingId: string }) {

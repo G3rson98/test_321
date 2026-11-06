@@ -172,12 +172,14 @@ function TestRailStatusPill() {
     staleTime: 60_000,
   });
   const pending = useQuery({
-    queryKey: qk.testrail.deliveries({ status: ['pendiente', 'requiere_intervencion'], limit: 1 }),
-    queryFn: ({ signal }) => testrailApi.deliveries({ status: ['pendiente', 'requiere_intervencion'], limit: 1 }, signal),
+    queryKey: qk.testrail.deliveries({ status: ['pendiente', 'requiere_intervencion'], limit: 100 }),
+    queryFn: ({ signal }) => testrailApi.deliveries({ status: ['pendiente', 'requiere_intervencion'], limit: 100 }, signal),
     staleTime: 60_000,
   });
   const last = syncRuns.data?.items[0];
-  const pendingCount = pending.data ? (pending.data.total ?? pending.data.items.length) : 0;
+  // La API no devuelve `total`: se cuenta una página de 100 y se indica "100+" si hay más.
+  const pendingCount = pending.data?.items.length ?? 0;
+  const pendingLabel = pending.data?.hasNext ? `${pendingCount}+` : String(pendingCount);
 
   let dot = 'bg-passed';
   let text = 'TestRail sin sincronizar';
@@ -192,7 +194,7 @@ function TestRailStatusPill() {
     text = `Sincronización fallida · ${formatTime(last.finishedAt ?? last.startedAt)}`;
   } else if (pendingCount > 0) {
     dot = 'bg-primary';
-    text = `Entregas pendientes: ${pendingCount}`;
+    text = `Entregas pendientes: ${pendingLabel}`;
   } else if (last) {
     text = `TestRail sincronizado · ${formatTime(last.finishedAt ?? last.startedAt)}`;
   } else if (syncRuns.isLoading) {

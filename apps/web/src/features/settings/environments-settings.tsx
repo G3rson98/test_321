@@ -42,7 +42,8 @@ type V = z.infer<typeof Schema>;
 
 export function EnvironmentsSettings() {
   const qc = useQueryClient();
-  const envs = useQuery({ queryKey: qk.environments.list(), queryFn: ({ signal }) => envApi.list(signal) });
+  // Admin: detalle completo e incluye ambientes dados de baja (`includeDisabled`).
+  const envs = useQuery({ queryKey: [...qk.environments.all, 'list-all'], queryFn: ({ signal }) => envApi.list(signal, { includeDisabled: true }) });
   const [editing, setEditing] = useState<Environment | 'nuevo' | null>(null);
   const list = itemsOf(envs.data) as Environment[];
   const columns: ColumnDef<Environment>[] = [

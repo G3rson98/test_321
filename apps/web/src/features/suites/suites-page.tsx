@@ -1,4 +1,7 @@
-/** 09 · Suites (RF-CAT-03): tarjetas con último resultado, etiquetas, conteo de casos y tests, horarios. */
+/**
+ * 09 · Suites (RF-CAT-03): tarjetas con último resultado, etiquetas, conteo de casos y tests, horarios. El último
+ * resultado sale de `GET /runs?suiteId=&status=terminada&limit=1` y los horarios de `GET /schedules` (la suite no los trae).
+ */
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, Play, Plus } from 'lucide-react';
@@ -9,8 +12,8 @@ import { PageHeader } from '@/components/common/page-header';
 import { TagChip } from '@/components/common/tag-chip';
 import { StatusBadge } from '@/components/common/status-badge';
 import { EmptyState, ErrorState } from '@/components/common/states';
-import { suitesApi } from '@/lib/api/endpoints';
-import type { Suite } from '@/lib/api/types';
+import { runsApi, schedulesApi, suitesApi } from '@/lib/api/endpoints';
+import type { Schedule, Suite } from '@/lib/api/types';
 import { qk } from '@/lib/query/keys';
 import { useCan } from '@/lib/auth/session';
 import { LAST_RESULT_NONE, RUN_OUTCOME_LABEL } from '@/lib/labels';
@@ -20,6 +23,8 @@ export function SuitesPage() {
   const navigate = useNavigate();
   const canWrite = useCan('suites.write');
   const suites = useQuery({ queryKey: qk.suites.list({ limit: 100 }), queryFn: ({ signal }) => suitesApi.list({ limit: 100 }, signal) });
+  const schedules = useQuery({ queryKey: qk.schedules.list({ limit: 100 }), queryFn: ({ signal }) => schedulesApi.list({ limit: 100 }, signal) });
+  const schedulesOf = (id: string) => (schedules.data?.items ?? []).filter((x) => x.suiteId === id && !x.deletedAt);
   return (
     <>
       <PageHeader
@@ -54,7 +59,7 @@ export function SuitesPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {suites.data!.items.map((s) => (
-            <SuiteCard key={s.id} suite={s} />
+            <SuiteCard key={s.id} suite={s} schedules={schedulesOf(s.id)} />
           ))}
         </div>
       )}
@@ -62,7 +67,10 @@ export function SuitesPage() {
   );
 }
 
-function SuiteCard({ suite }: { suite: Suite }) {
+function SuiteCard({ suite, schedules }: { suite: Suite; schedules: Schedule[] }) {
+  const lastQ = { suiteId: suite.id, status: 'terminada', limit: 1 };
+  const last = useQuery({ queryKey: qk.runs.list(lastQ), queryFn: ({ signal }) => runsApi.list(lastQ, signal) });
+  const lastOutcome = last.data?.items[0]?.outcome ?? null;
   const navigate = useNavigate();
   const canRun = useCan('runs.create');
   const canSchedule = useCan('schedules.write');
@@ -76,7 +84,7 @@ function SuiteCard({ suite }: { suite: Suite }) {
         <Link to="/suites/$suiteId" params={{ suiteId: suite.id }} className="text-[18px] font-semibold tracking-tight outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50">
           {suite.name}
         </Link>
-        <StatusBadge status={suite.lastOutcome ? RUN_OUTCOME_LABEL[suite.lastOutcome] : LAST_RESULT_NONE} />
+        <StatusBadge status={lastOutcome ? RUN_OUTCOME_LABEL[lastOutcome] : LAST_RESULT_NONE} />
       </div>
       <p className="mt-2 min-h-6 text-muted-foreground">{suite.description ?? ''}</p>
       <div className="mt-3 flex min-h-5 flex-wrap gap-1.5">
@@ -90,9 +98,10 @@ function SuiteCard({ suite }: { suite: Suite }) {
         <span>
           {cases ?? '–'} {plural(cases ?? 0, 'caso', 'casos')} · {tests ?? '–'} {plural(tests ?? 0, 'test', 'tests')}
         </span>
-        {(suite.scheduleLabels ?? []).map((l) => (
-          <span key={l} className="inline-flex items-center gap-1">
-            <CalendarClock className="size-3" aria-hidden /> {l}
+        {schedules.map((x) => (
+          <span key={x.id} className="inline-flex items-center gap-1" title={x.name}>
+            <CalendarClock className="size-3" aria-hidden /> {x.description ?? x.name}
+            {x.enabled ? null : ' (pausada)'}
           </span>
         ))}
       </div>

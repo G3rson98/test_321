@@ -159,7 +159,7 @@ Contratos acordados entre áreas (fase 1). Los agentes de API, runner, panel y g
   `GenerationDetailSchema` (generate/routes.ts) y `PerfSeriesItemSchema` (perf/routes.ts) por los de `@katalyst/shared`
   (misma forma). `apiCSettings()` puede leer de `Config` (mismos nombres y defaults; si se cambia un default, cambiarlo en
   ambos o eliminar `ApiCEnvSchema`: `config.test.ts` falla si divergen).
-- [API-A→WEB] `POST /recordings` responde `RecordingCreatedSchema` de shared (`assistantLink`
+- [RESUELTO] _(WEB 2026-11-06, D-052: types.ts y el mock usan `RecordingCreatedSchema`/`RecordingDetailSchema` y `katalyst://grabar?session=<id>`)_ [API-A→WEB] `POST /recordings` responde `RecordingCreatedSchema` de shared (`assistantLink`
   `katalyst://grabar?session=<id>`, `recording.environment`); `apps/web/src/lib/api/types.ts` y el mock
   (`mocks/handlers.ts`) usan todavía `RecordingCreatedResponseSchema`/`katalyst://recording/<id>`.
 - [RESUELTO] _(RUNNER 2026-11-06, D-051: límite de 16 MiB sobre el cuerpo serializado; excedente ⇒ `error: 'listado_demasiado_grande'`; `catalog-processor.test.ts`)_ [API-A→RUNNER] `catalog-processor.ts` acepta listados de hasta 32 MiB, pero la API acepta como máximo 16 MiB
@@ -209,6 +209,17 @@ Fuente de verdad en código: `apps/api/src/control/dispatcher.ts`, `src/services
   `<KATALYST_ATTEMPT_GATE_DIR>/<testId>-<retry>.json` y hacer `test.skip` si `proceed=false` (implementación de
   referencia en `apps/runner/test/fixtures/pw-project/fixtures/test.ts`). Sin ella el test puede interactuar con la app
   antes de que la API persista el inicio del intento.
+
+- [WEB→API-A] (D-052; el panel hoy deriva o degrada) Resumen de caso en `GET /testrail/cases` con `tags`, `flaky` y
+  `classification` (hoy: una llamada `/tests?caseId=` por fila automatizada); filtro `ids` en `GET /testrail/cases`
+  (selección masiva entre páginas; hoy `/testrail/cases/:id` por id); `GET /tests/:id/source` para el visor de código
+  del caso (hoy fragmento con metadatos del manifiesto); `appUrl` en el resumen de ambientes para rol qa; valor
+  `sin_ejecutar` en el filtro `lastResult`.
+- [WEB→API-B] Endpoint de resumen del inicio (éxito 7 días, corridas de hoy, en curso, próximas programaciones): hoy se
+  derivan de `/runs` y `/schedules` con tope de 100 ("100+"). Etiqueta legible de la selección en el resumen de corrida.
+- [WEB→API-C] `GET /perf`: p95 del período completo por serie (hoy "peor p95 por intervalo", rotulado así) y bytes
+  por serie (columnas "En red/Descomprimido" de la captura 19 omitidas). Reglas globales de notificación si el equipo
+  las quiere: hoy "Avisar cuando" (captura 25) edita las preferencias propias del admin (RF-NOT-03).
 
 ## De la base (packages/shared, apps/api esqueleto) — 2026-11-06
 - `@katalyst/shared` resuelve código fuente con la condición `source` (`tsx --conditions=source`, Vite/Vitest

@@ -9,8 +9,26 @@ import { NOW, recomputeRun, runs } from './data/seed';
 interface LoggedEvent {
   seq: number;
   type: string;
+  entity: EventEntity;
   payload: string;
 }
+/** Tópico de cada entidad, igual que `TOPIC_OF` en apps/api/src/modules/events/routes.ts (`?topics=`). */
+const TOPIC_OF: Record<EventEntity, string> = {
+  run: 'runs',
+  run_result: 'runs',
+  test_attempt: 'runs',
+  run_shard: 'runs',
+  case_result: 'runs',
+  run_testrail_target: 'runs',
+  schedule: 'schedules',
+  schedule_occurrence: 'schedules',
+  alert: 'alerts',
+  catalog_revision: 'catalog',
+  testrail_sync_run: 'testrail',
+  recording_session: 'recordings',
+  export_job: 'exports',
+  generation_request: 'generation',
+};
 let seq = 1000;
 const log: LoggedEvent[] = [];
 type Listener = (e: LoggedEvent) => void;
@@ -34,7 +52,7 @@ export function emit(type: EventType, entity: EventEntity, entityId: string, ver
     environmentId: null,
     data,
   };
-  const logged = { seq, type, payload: JSON.stringify(ev) };
+  const logged = { seq, type, entity, payload: JSON.stringify(ev) };
   log.push(logged);
   if (log.length > 500) log.shift();
   for (const l of listeners) l(logged);
@@ -42,7 +60,8 @@ export function emit(type: EventType, entity: EventEntity, entityId: string, ver
 
 const enc = new TextEncoder();
 /** Respuesta `text/event-stream` con snapshot inicial, replay desde Last-Event-ID y pings. */
-export function sseStream(lastEventId: string | null): ReadableStream<Uint8Array> {
+export function sseStream(lastEventId: string | null, topics: ReadonlySet<string> | null = null): ReadableStream<Uint8Array> {
+  const visible = (e: LoggedEvent) => topics === null || topics.has(TOPIC_OF[e.entity]);
   let listener: Listener | null = null;
   let ping: ReturnType<typeof setInterval> | null = null;
   return new ReadableStream<Uint8Array>({
@@ -63,10 +82,10 @@ export function sseStream(lastEventId: string | null): ReadableStream<Uint8Array
         if (log.length > 0 && last < (log[0]?.seq ?? 0) - 1) {
           send(`event: reset\ndata: ${JSON.stringify({ reason: 'last_event_id_expirado', lastSeq: seq })}\n\n`);
         } else {
-          for (const e of log.filter((x) => x.seq > last)) send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
+          for (const e of log.filter((x) => x.seq > last && visible(x))) send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
         }
       }
-      listener = (e) => send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
+      listener = (e) => visible(e) && send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
       listeners.add(listener);
       ping = setInterval(() => send(`event: ping\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`), 25_000);
     },

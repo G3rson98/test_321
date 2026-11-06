@@ -43,7 +43,7 @@ export function ScheduleDetailPage() {
   const lookups = useScheduleLookups();
   const s = useQuery({ queryKey: qk.schedules.detail(scheduleId), queryFn: ({ signal }) => schedulesApi.get(scheduleId, signal) });
   const next = useQuery({ queryKey: qk.schedules.next(scheduleId), queryFn: ({ signal }) => schedulesApi.next(scheduleId, 5, signal), enabled: !!s.data?.enabled });
-  const revisions = useQuery({ queryKey: qk.schedules.revisions(scheduleId), queryFn: ({ signal }) => schedulesApi.revisions(scheduleId, signal) });
+  const revisions = useQuery({ queryKey: qk.schedules.revisions(scheduleId), queryFn: ({ signal }) => schedulesApi.revisions(scheduleId, {}, signal) });
   const occ = useQuery({ queryKey: qk.schedules.occurrences(scheduleId, { limit: 25 }), queryFn: ({ signal }) => schedulesApi.occurrences(scheduleId, { limit: 25 }, signal) });
 
   if (s.isError && isApiError(s.error) && s.error.status === 404) return <NotFoundPage />;

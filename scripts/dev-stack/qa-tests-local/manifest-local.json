@@ -1,0 +1,46 @@
+[
+  {
+    "stableKey": "36c33ab8-b663-4bd9-98a0-f89a16308322",
+    "file": "tests/local/humo-local.spec.ts",
+    "title": "C900006 Abrir la página local y ver el centro de control @local @humo",
+    "cases": ["C900006"],
+    "tags": ["@local", "@humo"],
+    "classification": "lectura",
+    "parameterKeys": ["default"],
+    "writeIdempotencyApproved": false,
+    "owner": "katalyst-aceptacion"
+  },
+  {
+    "stableKey": "9797e4e1-d8bb-4d10-b991-5a8a86c3dd17",
+    "file": "tests/local/humo-local.spec.ts",
+    "title": "C900007 Ver un indicador inexistente en la página local @local",
+    "cases": ["C900007"],
+    "tags": ["@local"],
+    "classification": "lectura",
+    "parameterKeys": ["default"],
+    "writeIdempotencyApproved": false,
+    "owner": "katalyst-aceptacion"
+  },
+  {
+    "stableKey": "1fadf4c1-b985-4282-ac7e-784ac3a9f7f3",
+    "file": "tests/local/humo-local.spec.ts",
+    "title": "C900008 Esperar un indicador que nunca aparece @local @lento",
+    "cases": ["C900008"],
+    "tags": ["@local", "@lento"],
+    "classification": "lectura",
+    "parameterKeys": ["default"],
+    "writeIdempotencyApproved": false,
+    "owner": "katalyst-aceptacion"
+  },
+  {
+    "stableKey": "838f47d1-b689-4118-aa2a-7c3d446ce0c6",
+    "file": "tests/local/humo-local.spec.ts",
+    "title": "C900009 Página de canarios con datos sensibles sembrados @local @canario",
+    "cases": ["C900009"],
+    "tags": ["@local", "@canario"],
+    "classification": "lectura",
+    "parameterKeys": ["default"],
+    "writeIdempotencyApproved": false,
+    "owner": "katalyst-aceptacion"
+  }
+]

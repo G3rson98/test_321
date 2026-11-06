@@ -1,7 +1,7 @@
 /**
  * Tipos de DTO del panel: SOLO `z.infer` de `@katalyst/shared/schemas` (sin costo en el bundle), idénticos a lo que
  * serializa la API (Fastify + Zod descarta campos no declarados). Los datos que la API no expone se derivan en el
- * panel a partir de otros endpoints (ver `lib/api/derive.ts`) o se degradan con un estado "no disponible"; las
+ * panel a partir de otros endpoints (ver `features/common/derived.ts`) o se degradan con un estado "no disponible"; las
  * necesidades abiertas están en docs/pendientes-integracion.md ([WEB→API-*]).
  */
 import type { z } from 'zod';

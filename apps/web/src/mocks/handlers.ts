@@ -905,7 +905,7 @@ export const handlers = [
     if (isResp(g)) return g;
     const r = db.runById(String(params.id));
     if (!r) return notFound();
-    if (['terminada', 'cancelada', 'interrumpida', 'omitida'].includes(r.status)) return err(409, 'RUN_NOT_CANCELLABLE', 'La ejecución ya terminó y no puede cancelarse.');
+    if (['terminada', 'cancelada', 'interrumpida', 'omitida'].includes(r.status)) return err(409, 'RUN_NOT_CANCELLABLE', 'La corrida ya terminó y no puede cancelarse.');
     if (r.status !== 'cancelando') {
       r.status = 'cancelando';
       r.cancelRequestedAt = new Date().toISOString();
@@ -1175,7 +1175,7 @@ export const handlers = [
     const b = validate(PerfThresholdCreateSchema, await body(request));
     if (isResp(b)) return b;
     const now = new Date().toISOString();
-    const t = { ...b, id: db.uuid(), unit: b.metric === 'p95' || b.metric === 'max' ? ('ms' as const) : ('ratio' as const), label: null, lastEvaluation: null, createdBy: { id: g.id, kind: 'panel_user' as const, displayName: g.name }, createdAt: now, updatedAt: now, version: 1 };
+    const t = { ...b, id: db.uuid(), unit: b.metric === 'p95' || b.metric === 'max' ? ('ms' as const) : ('ratio' as const), label: b.label ?? null, lastEvaluation: null, createdBy: { id: g.id, kind: 'panel_user' as const, displayName: g.name }, createdAt: now, updatedAt: now, version: 1 };
     db.thresholds.push(t as never);
     return reply(PerfThresholdSchema, t, 201);
   }),
@@ -1566,7 +1566,8 @@ export const handlers = [
     const u = currentUser();
     if (!u) return err(401, 'UNAUTHENTICATED', 'Se requiere autenticación.');
     void currentSeq;
-    return new HttpResponse(sseStream(request.headers.get('Last-Event-ID')), {
+    const topics = new URL(request.url).searchParams.getAll('topics').flatMap((t) => t.split(',')).filter(Boolean);
+    return new HttpResponse(sseStream(request.headers.get('Last-Event-ID'), topics.length ? new Set(topics) : null), {
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' },
     });
   }),

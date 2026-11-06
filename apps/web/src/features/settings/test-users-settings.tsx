@@ -21,7 +21,7 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { DataTable } from '@/components/data-table/data-table';
 import { envApi, itemsOf } from '@/lib/api/endpoints';
 import type { EnvironmentSummary, TestUser } from '@/lib/api/types';
-import { errorMessage, fieldErrorsFrom } from '@/lib/api/client';
+import { errorMessage, fieldErrorsFrom, isApiError } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 
 const route = getRouteApi('/_app/configuracion/usuarios-prueba');
@@ -35,7 +35,7 @@ export function TestUsersSettings() {
   const ids = search.ambiente ? [search.ambiente] : envList.map((e) => e.id);
   const users = useQuery({
     queryKey: [...qk.environments.users(ids.join(','))],
-    queryFn: async ({ signal }) => (await Promise.all(ids.map((id) => envApi.users(id, signal)))).flatMap((x) => itemsOf(x)),
+    queryFn: async ({ signal }) => (await Promise.all(ids.map((id) => envApi.users(id, signal, { includeDisabled: true })))).flatMap((x) => itemsOf(x)),
     enabled: ids.length > 0,
   });
   const [editing, setEditing] = useState<TestUser | 'nuevo' | null>(null);
@@ -106,7 +106,7 @@ function TestUserDialog({ user, envs, defaultEnv, onClose, onSaved }: { user: Te
   if (env?.isProduction && !readOnly) local.readOnly = 'Producción solo admite usuarios de solo lectura';
   const save = useMutation({
     mutationFn: () => {
-      const body = { label: label.trim() || username.trim(), username: username.trim(), secretRef: secretRef.trim(), readOnly, enabled, allowsConcurrency: false };
+      const body = { label: label.trim() || username.trim(), username: username.trim(), secretRef: secretRef.trim(), readOnly, enabled, allowsConcurrency: user?.allowsConcurrency ?? false };
       return user ? envApi.updateUser(user.environmentId, user.id, { ...body, version: user.version }) : envApi.createUser(envId, body);
     },
     onSuccess: () => {
@@ -115,6 +115,9 @@ function TestUserDialog({ user, envs, defaultEnv, onClose, onSaved }: { user: Te
     },
     onError: (e) => {
       const f = fieldErrorsFrom(e);
+      // Errores de negocio sin `details.issues` en la API: se ubican en su campo.
+      if (isApiError(e) && e.code === 'PRODUCTION_BLOCKED') f.readOnly = e.message;
+      if (isApiError(e) && e.code === 'CONFLICT') f.label = e.message;
       setErrs(f);
       if (!Object.keys(f).length) toast.error(errorMessage(e));
     },
@@ -152,7 +155,8 @@ function TestUserDialog({ user, envs, defaultEnv, onClose, onSaved }: { user: Te
             </div>
             <div className="space-y-2">
               <Label htmlFor="tu-label">Etiqueta</Label>
-              <Input id="tu-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Opcional" />
+              <Input id="tu-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Opcional" aria-invalid={!!errs.label} />
+              <FieldError message={errs.label} />
             </div>
           </div>
           <div className="space-y-2">

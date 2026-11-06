@@ -635,3 +635,19 @@ número libre.
   `katalyst_test_runner` y Redis índice 4: POST /runs → outbox → BullMQ → supervisor → ejecutor → `terminada/fallido`;
   cancelación por pub/sub < 30 s ⇒ `cancelada`). Los módulos de la API se importan dinámicamente para no acoplar el
   typecheck del runner al de la API; la prueba se omite con motivo si PostgreSQL/Redis no están disponibles.
+
+## D-052 — Cierre de WEB: contratos reales en MSW, rutas derivadas y presupuesto de bundle
+- **MSW = contrato:** `apps/web/src/mocks/contract.ts` pasa cada respuesta del mock por el schema de
+  `@katalyst/shared` con el que serializa la API (campos extra se descartan; violación ⇒ 500 `MOCK_CONTRACT_VIOLATION`)
+  y valida cuerpos con los schemas de creación/edición (422 `details.issues`). Códigos de estado, paginación (sin
+  `total`) y errores iguales a `apps/api/src/modules/*/routes.ts`.
+- **Sin endpoints inventados:** se eliminaron `/dashboard/summary`, `/catalog/tags`, `/tests/:id/source`,
+  `/perf/summary`, `/notifications/rules` y `/recordings/:id/commands`. El inicio deriva KPIs de `/runs`, `/schedules`,
+  `/testrail/sections` y `/environments` (conteos sobre una página de 100, "100+" si `hasNext`); el resumen de
+  rendimiento sale de `GET /perf`; "Avisar cuando" edita las preferencias propias (RF-NOT-03); detener/verificar/PR de
+  una grabación se hace en el asistente (`katalyst://grabar?session=<id>`). Lo que falta en la API quedó en
+  `docs/pendientes-integracion.md` como `[WEB→API-*]`.
+- **Aprobación de dispositivo** en `/dispositivos/vincular?codigo=XXXX-XXXX` (mismo origen, `DEVICE_VERIFICATION_PATH`).
+- **Presupuesto RNF-OPT-03:** `pnpm --filter @katalyst/web size` construye y falla si el JS inicial (script de
+  entrada + modulepreload + imports estáticos) supera 250 KiB gzip. Recharts ya no va a un `manualChunk` (Rollup
+  arrastraba dependencias compartidas y lo volvía inicial); queda diferido por `import()`. Medido: 203 KiB inicial.

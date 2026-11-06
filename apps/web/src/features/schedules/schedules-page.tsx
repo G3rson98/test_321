@@ -35,7 +35,7 @@ export function useScheduleLookups() {
     envs: itemsOf(envs.data),
     targetLabel: (s: Schedule) => {
       const sel = s.selector;
-      if (sel.kind === 'suite') return suites.data?.items.find((x) => x.id === sel.suiteId)?.name ?? s.targetLabel ?? 'Suite';
+      if (sel.kind === 'suite') return suites.data?.items.find((x) => x.id === sel.suiteId)?.name ?? 'Suite';
       if (sel.kind === 'tags') return sel.tags.join(' ');
       return `${sel.caseIds.length} casos`;
     },
@@ -152,7 +152,7 @@ export function SchedulesPage() {
         ),
       },
       { id: 'objetivo', header: 'Objetivo', cell: ({ row }) => lookups.targetLabel(row.original) },
-      { id: 'ambiente', header: 'Ambiente', cell: ({ row }) => row.original.environmentName ?? lookups.envName(row.original.environmentId) },
+      { id: 'ambiente', header: 'Ambiente', cell: ({ row }) => lookups.envName(row.original.environmentId) },
       {
         id: 'horario',
         header: 'Horario',

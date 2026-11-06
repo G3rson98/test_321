@@ -24,11 +24,12 @@ import { Callout, FieldError } from '@/components/common/misc';
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { DataTable } from '@/components/data-table/data-table';
 import { envApi, itemsOf, perfApi } from '@/lib/api/endpoints';
-import type { PerfErrorItem, PerfSummaryRow, PerfThreshold } from '@/lib/api/types';
-import { errorMessage, fieldErrorsFrom, isApiError } from '@/lib/api/client';
+import type { PerfErrorItem, PerfThreshold } from '@/lib/api/types';
+import { METRIC_KIND_LABEL, selectorOf, summarizePerf, type PerfSummaryRow } from './perf-summary';
+import { errorMessage, fieldErrorsFrom } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { useCan } from '@/lib/auth/session';
-import { formatBytes, formatDateTimeShort, formatSeconds, formatTimeSeconds, startOfLocalDay } from '@/lib/format';
+import { formatDateTimeShort, formatSeconds, formatTimeSeconds, startOfLocalDay } from '@/lib/format';
 import type { PerfSearch } from '@/app/search';
 import type { ChartSeries } from './perf-chart';
 
@@ -68,12 +69,14 @@ export function PerfPage() {
     enabled: !!envId,
     placeholderData: keepPreviousData,
   });
-  const summary = useQuery({ queryKey: qk.perf.summary(baseQ), queryFn: ({ signal }) => perfApi.summary(baseQ, signal), enabled: !!envId, retry: false });
+  // Umbrales: solo dev/admin pueden leerlos (perf.thresholds.manage); qa ve el resumen sin límite.
+  const thresholds = useQuery({ queryKey: qk.perf.thresholds({ environmentId: envId }), queryFn: ({ signal }) => perfApi.thresholds({ environmentId: envId, limit: 100 }, signal), enabled: !!envId && canThreshold });
   const errors = useQuery({ queryKey: qk.perf.errors({ ...baseQ, limit: 100 }), queryFn: ({ signal }) => perfApi.errors({ ...baseQ, limit: 100 }, signal), enabled: !!envId });
 
-  const rows = summary.data?.rows ?? [];
-  const main = rows[0];
-  const current = rows.find((x) => x.seriesKey.metricKind === 'root_current_wait');
+  const rows = useMemo(() => summarizePerf(agg.data, thresholds.data?.items), [agg.data, thresholds.data]);
+  const main = rows.filter((x) => x.key.metricKind !== 'root_current_wait').sort((a, b) => (b.p95Ms ?? -1) - (a.p95Ms ?? -1))[0];
+  const current = rows.find((x) => x.key.metricKind === 'root_current_wait');
+  const limitOf = (x: PerfSummaryRow | undefined) => x?.threshold?.limit ?? null;
   const errItems = errors.data?.items ?? [];
   const http = errItems.filter((e) => e.kind === 'http_error');
   const over = errItems.filter((e) => e.kind === 'over_29s');
@@ -84,7 +87,7 @@ export function PerfPage() {
 
   const series: ChartSeries[] = (agg.data?.series ?? []).map((s, i) => ({
     key: `s${i}`,
-    label: rows.find((x) => x.seriesKey.endpointKey === s.key.endpointKey)?.screen ?? shortEndpoint(s.key.endpointKey),
+    label: shortEndpoint(s.key.endpointKey),
     color: COLORS[i % COLORS.length]!,
     points: s.points,
     comparison: s.comparison,
@@ -96,37 +99,37 @@ export function PerfPage() {
 
   const columns = useMemo<ColumnDef<PerfSummaryRow>[]>(
     () => [
-      { id: 'pantalla', header: 'Pantalla', cell: ({ row }) => row.original.screen },
-      { id: 'servicio', header: 'Servicio', cell: ({ row }) => <span className="font-mono text-[13px]">{shortEndpoint(row.original.seriesKey.endpointKey)}</span> },
+      { id: 'tipo', header: 'Medición', cell: ({ row }) => METRIC_KIND_LABEL[row.original.key.metricKind] },
+      { id: 'servicio', header: 'Servicio', cell: ({ row }) => <span className="font-mono text-[13px]">{shortEndpoint(row.original.key.endpointKey)}</span> },
       { id: 'prom', header: 'Promedio', cell: ({ row }) => <span className="font-mono text-[13px]">{formatSeconds(row.original.meanMs)}</span> },
       {
         id: 'p95',
-        header: 'P95',
+        header: () => <span title="Peor p95 por intervalo del período (el p95 del período completo no se recombina desde intervalos)">P95 (peor intervalo)</span>,
         cell: ({ row }) => {
           const x = row.original;
           if (x.p95Ms === null) return <span className="text-[13px] text-flaky">{x.p95Status === 'no_disponible' ? 'No disponible' : 'Muestra insuficiente'}</span>;
-          const over = x.thresholdLimitMs !== null && x.p95Ms > x.thresholdLimitMs;
+          const lim = limitOf(x);
+          const over = lim !== null && x.p95Ms > lim;
           return <span className={`font-mono text-[13px] font-semibold ${over ? 'text-failed' : ''}`}>{formatSeconds(x.p95Ms)}</span>;
         },
       },
       { id: 'max', header: 'Máximo', cell: ({ row }) => <span className="font-mono text-[13px]">{formatSeconds(row.original.maxMs)}</span> },
       { id: 'n', header: 'n', cell: ({ row }) => <span className="font-mono text-[13px]" title="Respuestas completadas / iniciadas">{row.original.completed}/{row.original.started}</span> },
-      { id: 'red', header: 'En red', cell: ({ row }) => <span className="font-mono text-[13px]">{formatBytes(row.original.bytesWire)}</span> },
-      { id: 'desc', header: 'Descomprimido', cell: ({ row }) => <span className="font-mono text-[13px]">{formatBytes(row.original.bytesBody)}</span> },
+      { id: 'err', header: 'Errores', cell: ({ row }) => <span className="font-mono text-[13px]">{row.original.httpErrors + row.original.timeouts}</span> },
       {
         id: 'umbral',
         header: 'Umbral p95',
         cell: ({ row }) =>
           canThreshold ? (
-            <Button variant="outlineCard" size="sm" className="font-mono" onClick={() => setEditing(row.original)} aria-label={`Editar umbral de ${row.original.screen}`}>
-              {row.original.thresholdLimitMs !== null ? formatSeconds(row.original.thresholdLimitMs).replace(',0', '') : 'Definir'} <Pencil className="size-3" />
+            <Button variant="outlineCard" size="sm" className="font-mono" onClick={() => setEditing(row.original)} aria-label={`Editar umbral de ${shortEndpoint(row.original.key.endpointKey)}`}>
+              {limitOf(row.original) !== null ? formatSeconds(limitOf(row.original)).replace(',0', '') : 'Definir'} <Pencil className="size-3" />
             </Button>
           ) : (
-            <span className="font-mono text-[13px]">{row.original.thresholdLimitMs !== null ? formatSeconds(row.original.thresholdLimitMs).replace(',0', '') : '–'}</span>
+            <span className="font-mono text-[13px]" title="Los umbrales los gestionan desarrolladores">–</span>
           ),
       },
     ],
-    [canThreshold],
+    [canThreshold], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const errColumns: ColumnDef<PerfErrorItem>[] = [
@@ -172,13 +175,13 @@ export function PerfPage() {
 
       <KpiGrid>
         <KpiCard
-          label={`P95 ${main?.screen.split(' · ')[0] ?? ''}`.trim()}
-          loading={summary.isLoading}
-          tone={main?.p95Ms && main.thresholdLimitMs && main.p95Ms > main.thresholdLimitMs ? 'failed' : 'default'}
+          label="P95 más alto"
+          loading={agg.isLoading}
+          tone={main?.p95Ms && limitOf(main) && main.p95Ms > limitOf(main)! ? 'failed' : 'default'}
           value={main ? (main.p95Ms !== null ? formatSeconds(main.p95Ms) : '—') : '—'}
-          hint={main ? (main.p95Ms === null ? 'muestra insuficiente' : `p95 del período · umbral ${formatSeconds(main.thresholdLimitMs).replace(',0', '')}`) : summary.isError ? 'Resumen no disponible' : ' '}
+          hint={main ? (main.p95Ms === null ? 'muestra insuficiente' : `${shortEndpoint(main.key.endpointKey)}${limitOf(main) !== null ? ` · umbral ${formatSeconds(limitOf(main)).replace(',0', '')}` : ''}`) : agg.isError ? 'No se pudo cargar' : ' '}
         />
-        <KpiCard label="Espera por current" loading={summary.isLoading} tone="passed" value={current?.p95Ms !== null && current ? formatSeconds(current.p95Ms) : '—'} hint={current ? `${formatBytes(current.bytesWire)} comprimido` : ' '} />
+        <KpiCard label="Espera por current" loading={agg.isLoading} tone="passed" value={current?.p95Ms != null ? formatSeconds(current.p95Ms) : '—'} hint={current ? `p95 peor intervalo · n=${current.completed}` : 'sin mediciones'} />
         <KpiCard label="Errores HTTP" loading={errors.isLoading} tone={http.length ? 'flaky' : 'default'} value={http.length} hint={[byCode, timeouts.length ? `${timeouts.length} ${timeouts.length === 1 ? 'timeout' : 'timeouts'}` : ''].filter(Boolean).join(' · ') || 'sin errores'} />
         <KpiCard label="Respuestas > 29 s" loading={errors.isLoading} tone={over.length ? 'failed' : 'default'} value={over.length} hint={over[0] ? `${formatTimeSeconds(over[0].ts)} · ${shortEndpoint(over[0].endpointKey).split('/').pop()}` : 'ninguna'} />
       </KpiGrid>
@@ -211,7 +214,7 @@ export function PerfPage() {
         ) : (
           <>
             <Suspense fallback={<Skeleton className="h-[300px]" />}>
-              <PerfChart series={series} thresholdMs={main?.thresholdLimitMs ?? null} marks={agg.data?.marks ?? []} granularity={by} />
+              <PerfChart series={series} thresholdMs={limitOf(main)} marks={agg.data?.marks ?? []} granularity={by} />
             </Suspense>
             <p className="mt-2 text-[12.5px] text-muted-foreground">
               {insufficient ? 'Los huecos son intervalos con muestra insuficiente (< 20 respuestas completadas): no se calcula p95. ' : ''}
@@ -221,12 +224,8 @@ export function PerfPage() {
         )}
       </CardSection>
 
-      <CardSection title="Por pantalla y servicio" padded={false} className="mb-6">
-        {summary.isError && isApiError(summary.error) && summary.error.status === 404 ? (
-          <EmptyState title="Resumen por servicio no disponible" description="La API aún no expone el resumen del período." />
-        ) : (
-          <DataTable caption="Rendimiento por pantalla y servicio" columns={columns} data={rows} getRowId={(x) => x.seriesKey.endpointKey + x.seriesKey.source} isLoading={summary.isLoading} error={summary.error} onRetry={() => void summary.refetch()} empty={{ title: 'Sin mediciones en este período' }} />
-        )}
+      <CardSection title="Por servicio" padded={false} className="mb-6">
+        <DataTable caption="Rendimiento por servicio" columns={columns} data={rows} getRowId={(x) => `${x.key.endpointKey}|${x.key.source}|${x.key.metricKind}|${x.key.provenance}`} isLoading={agg.isLoading} error={agg.error} onRetry={() => void agg.refetch()} empty={{ title: 'Sin mediciones en este período' }} />
       </CardSection>
 
       <CardSection title="Errores, timeouts y respuestas > 29 s" padded={false}>
@@ -251,8 +250,8 @@ export function PerfPage() {
 
 function ThresholdDialog({ row, environmentId, onClose, onSaved }: { row: PerfSummaryRow; environmentId: string; onClose: () => void; onSaved: () => void }) {
   const list = useQuery({ queryKey: qk.perf.thresholds({ environmentId }), queryFn: ({ signal }) => perfApi.thresholds({ environmentId, limit: 100 }, signal) });
-  const existing: PerfThreshold | undefined = list.data?.items.find((t) => t.id === row.thresholdId);
-  const [limit, setLimit] = useState(String((row.thresholdLimitMs ?? 10_000) / 1000));
+  const existing: PerfThreshold | undefined = list.data?.items.find((t) => t.id === row.threshold?.id);
+  const [limit, setLimit] = useState(String((row.threshold?.limit ?? 10_000) / 1000));
   const [windowMin, setWindowMin] = useState(String(existing?.windowMin ?? 60));
   const [minSamples, setMinSamples] = useState(String(existing?.minSamples ?? 20));
   const [errs, setErrs] = useState<Record<string, string>>({});
@@ -260,13 +259,13 @@ function ThresholdDialog({ row, environmentId, onClose, onSaved }: { row: PerfSu
     mutationFn: () => {
       const body = {
         environmentId,
-        seriesSelector: row.seriesKey,
+        seriesSelector: selectorOf(row.key),
         metric: 'p95' as const,
         limit: Math.round(Number(limit.replace(',', '.')) * 1000),
         windowMin: Number(windowMin),
         minSamples: Number(minSamples),
         enabled: true,
-        label: `${row.screen} p95`,
+        label: `${shortEndpoint(row.key.endpointKey)} p95`,
       };
       return existing ? perfApi.updateThreshold(existing.id, { ...body, version: existing.version }) : perfApi.createThreshold(body);
     },
@@ -285,9 +284,9 @@ function ThresholdDialog({ row, environmentId, onClose, onSaved }: { row: PerfSu
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Umbral p95 · {row.screen}</DialogTitle>
+          <DialogTitle>Umbral p95 · {shortEndpoint(row.key.endpointKey)}</DialogTitle>
           <DialogDescription>
-            Serie: <span className="font-mono">{row.seriesKey.endpointKey}</span> · {row.seriesKey.provenance} · {row.seriesKey.source}. Se alerta como máximo una vez por hora.
+            Serie: <span className="font-mono">{row.key.endpointKey}</span> · {row.key.provenance} · {row.key.source}. Se alerta como máximo una vez por hora.
           </DialogDescription>
         </DialogHeader>
         {list.isLoading ? <Skeleton className="h-24" /> : null}

@@ -20,7 +20,8 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { DataTable, type PageSize } from '@/components/data-table/data-table';
 import { catalogApi, itemsOf } from '@/lib/api/endpoints';
-import type { CaseRow, Section } from '@/lib/api/types';
+import type { CaseRow, FlakyInfo, Section } from '@/lib/api/types';
+import { sectionNameMap, useCaseAutomation, useKnownTags } from '@/features/common/derived';
 import { errorMessage } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { useCan } from '@/lib/auth/session';
@@ -31,11 +32,10 @@ import { cn, plural } from '@/lib/utils';
 import type { CatalogSearch } from '@/app/search';
 
 const route = getRouteApi('/_app/catalogo');
-export const DEFAULT_TAGS = ['@humo', '@oc', '@agendamiento', '@arranque', '@rendimiento'];
 
-export function AutomationStatus({ row }: { row: Pick<CaseRow, 'automated' | 'linksRequiringReview' | 'flaky'> }) {
+export function AutomationStatus({ row, flaky: info }: { row: Pick<CaseRow, 'automated' | 'linksRequiringReview'>; flaky?: FlakyInfo | null }) {
   if (!row.automated) return <span className="text-[14px] text-muted-foreground">○ Sin test</span>;
-  const flaky = row.flaky?.isFlaky ? row.flaky : null;
+  const flaky = info?.isFlaky ? info : null;
   return (
     <div className="text-[14px] whitespace-nowrap">
       {row.linksRequiringReview > 0 ? <span className="text-flaky">⚠ Requiere revisión</span> : <span className="text-passed">● Automatizado</span>}
@@ -100,9 +100,10 @@ export function CatalogPage() {
     queryFn: ({ signal }) => catalogApi.cases(query, signal),
     placeholderData: keepPreviousData,
   });
-  const sections = useQuery({ queryKey: qk.catalog.sections(), queryFn: ({ signal }) => catalogApi.sections(signal) });
-  const tags = useQuery({ queryKey: qk.catalog.tags(), queryFn: ({ signal }) => catalogApi.tags(signal), retry: false });
-  const tagOptions = tags.data?.items ?? DEFAULT_TAGS;
+  const sections = useQuery({ queryKey: qk.catalog.sections(), queryFn: ({ signal }) => catalogApi.sections({}, signal) });
+  const tagOptions = useKnownTags();
+  const automation = useCaseAutomation(cases.data?.items);
+  const sectionNames = useMemo(() => sectionNameMap(sections.data?.items), [sections.data]);
   const activeTags = search.etiqueta ? search.etiqueta.split(',') : [];
 
   const sync = useMutation({
@@ -135,16 +136,16 @@ export function CatalogPage() {
               <span className="truncate">{row.original.title}</span>
             </div>
             <div className="text-[13px] text-muted-foreground">
-              {row.original.sectionName ?? 'Sin sección'} · Prioridad {row.original.priority ?? '—'}
+              {sectionNames.get(row.original.sectionId) ?? 'Sin sección'} · Prioridad {row.original.priority ?? '—'}
             </div>
           </div>
         ),
       },
-      { id: 'etiquetas', header: 'Etiquetas', meta: { label: 'Etiquetas' }, enableSorting: false, cell: ({ row }) => <TagList tags={row.original.tags} /> },
-      { id: 'automatizacion', header: 'Automatización', meta: { label: 'Automatización' }, enableSorting: false, cell: ({ row }) => <AutomationStatus row={row.original} /> },
+      { id: 'etiquetas', header: 'Etiquetas', meta: { label: 'Etiquetas' }, enableSorting: false, cell: ({ row }) => <TagList tags={automation.get(row.original.id)?.tags ?? []} /> },
+      { id: 'automatizacion', header: 'Automatización', meta: { label: 'Automatización' }, enableSorting: false, cell: ({ row }) => <AutomationStatus row={row.original} flaky={automation.get(row.original.id)?.flaky} /> },
       { id: 'ultimo', header: 'Último', meta: { label: 'Último' }, enableSorting: false, cell: ({ row }) => <StatusBadge status={lastResultLabel(row.original.lastResult?.status)} /> },
     ],
-    [],
+    [automation, sectionNames],
   );
 
   const hasFilters = !!(search.seccion || search.etiqueta || search.q || search.estado || search.automatizacion);
@@ -214,7 +215,6 @@ export function CatalogPage() {
                 <SelectItem value="fallido">Fallido</SelectItem>
                 <SelectItem value="inestable">Inestable</SelectItem>
                 <SelectItem value="bloqueado">Bloqueado</SelectItem>
-                <SelectItem value="sin_ejecutar">Sin ejecutar</SelectItem>
               </SelectContent>
             </Select>
           </div>

@@ -3,7 +3,8 @@
 # ESP §13.7 sobre artefactos (JSON/HTML/ZIP/DOM/URLs).
 #
 # Uso: `pnpm secrets:scan`  (equivale a `gitleaks detect --no-git --source . --config .gitleaks.toml --redact`)
-#      En CI con historial: `gitleaks detect --source . --config .gitleaks.toml --redact`.
+#      Historial: `pnpm secrets:scan:git` (`gitleaks git --config .gitleaks.toml --redact .`).
+#      Resultado del ensayo y criterio de las excepciones: docs/aceptacion/seguridad.md.
 
 title = "Katalyst gitleaks"
 
@@ -51,7 +52,7 @@ keywords = ["password", "passwd", "contrase"]
 
 # --- Excepciones -------------------------------------------------------------
 
-[allowlist]
+[[allowlists]]
 description = "Fixtures sintéticos y archivos sin secretos"
 paths = [
   # Lockfile y artefactos generados
@@ -73,3 +74,28 @@ regexes = [
   '''postgresql://katalyst:katalyst_dev@localhost''',
 ]
 stopwords = ["example", "ejemplo", "dummy", "placeholder"]
+
+# Excepciones ACOTADAS por regla (gitleaks ≥ 8.25, `[[allowlists]]` con `targetRules`). Revisadas en
+# docs/aceptacion/seguridad.md: todos los valores son sintéticos y se usan para probar sanitización/autenticación.
+
+[[allowlists]]
+description = "Canarios, contraseñas y claves SINTÉTICAS de las suites de pruebas (ensayos ESP §13.7 / RNF-SEG-01)"
+targetRules = ["katalyst-canary", "password-assignment", "generic-api-key", "jwt"]
+paths = [
+  '''^apps/(api|runner|recorder)/test/''',
+]
+
+[[allowlists]]
+description = "stableKey del manifiesto (UUID v4, no es una clave)"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = [
+  '''stableKey"?\s*[:=]\s*"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"''',
+]
+
+[[allowlists]]
+description = "Contraseña de demostración del mock MSW del panel (solo modo demo sin backend)"
+targetRules = ["password-assignment"]
+paths = [
+  '''^apps/web/src/mocks/''',
+]

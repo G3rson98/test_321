@@ -31,7 +31,7 @@ import { firstError } from '@/lib/form';
 import { selection } from '@/lib/stores/selection';
 import { useCan } from '@/lib/auth/session';
 import { CasePicker } from '@/features/suites/suite-form-page';
-import { DEFAULT_TAGS } from '@/features/catalog/catalog-page';
+import { useKnownTags } from '@/features/common/derived';
 import { CronEditor, CronPreview, DEFAULT_CRON, fromEditor, toEditor, validateCron, type CronValue } from './cron-editor';
 
 const newRoute = getRouteApi('/_app/programaciones/nueva');
@@ -71,7 +71,8 @@ function fromSchedule(s: Schedule | null, init: Partial<Values> = {}): Values {
   };
 }
 
-function toBody(v: Values): ScheduleCreate {
+/** `enabled` se conserva al editar (la API lo toma del cuerpo: guardar no reanuda una programación pausada). */
+function toBody(v: Values, enabled = true, channels: Schedule['notify']['channels'] = []): ScheduleCreate {
   const selection = v.target === 'suite' ? { suiteId: v.suiteId } : v.target === 'casos' ? { caseIds: v.caseIds } : { tags: v.tags };
   return {
     name: v.name.trim(),
@@ -79,8 +80,8 @@ function toBody(v: Values): ScheduleCreate {
     environmentId: v.environmentId,
     timezone: v.cron.timezone,
     retries: v.retries,
-    enabled: true,
-    notify: { onFailure: v.onFailure, onInterruption: v.onInterruption, channels: [] },
+    enabled,
+    notify: { onFailure: v.onFailure, onInterruption: v.onInterruption, channels },
     editor: toEditor(v.cron),
   } as ScheduleCreate;
 }
@@ -124,6 +125,7 @@ export function ScheduleEditPage() {
 }
 
 function ScheduleForm({ schedule, initial }: { schedule: Schedule | null; initial: Values }) {
+  const knownTags = useKnownTags();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const canWrite = useCan('schedules.write');
@@ -136,7 +138,7 @@ function ScheduleForm({ schedule, initial }: { schedule: Schedule | null; initia
   const envList = itemsOf(envs.data).filter((e) => e.enabled);
 
   const save = useMutation({
-    mutationFn: (v: Values) => (schedule ? schedulesApi.update(schedule.id, { ...toBody(v), revision: schedule.revision } as ScheduleUpdate) : schedulesApi.create(toBody(v))),
+    mutationFn: (v: Values) => (schedule ? schedulesApi.update(schedule.id, { ...toBody(v, schedule.enabled, schedule.notify.channels), revision: schedule.revision } as ScheduleUpdate) : schedulesApi.create(toBody(v))),
   });
 
   const form = useForm({
@@ -286,7 +288,7 @@ function ScheduleForm({ schedule, initial }: { schedule: Schedule | null; initia
                 <form.Field name="tags">
                   {(f) => (
                     <div className="flex flex-wrap gap-1.5">
-                      {DEFAULT_TAGS.map((t) => (
+                      {knownTags.map((t) => (
                         <FilterChip key={t} tag={t} selected={f.state.value.includes(t)} onToggle={() => f.handleChange(f.state.value.includes(t) ? f.state.value.filter((x) => x !== t) : [...f.state.value, t])} />
                       ))}
                     </div>

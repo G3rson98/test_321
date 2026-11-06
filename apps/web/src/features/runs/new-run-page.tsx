@@ -2,7 +2,7 @@
  * 11/12/13 · Nueva ejecución (RF-EJE-01/04/05/06/07, ESP §13.1, §17.2, §17.3).
  * - Selección exclusiva: suite | casos | etiquetas (nunca mezcladas en una petición).
  * - PREVIEW obligatorio (`POST /runs/preview`, con debounce y cancelación): casos y tests por separado, cobertura,
- *   bloqueados con motivo (no se descartan en silencio), advertencias de producción; workers/duración del servidor.
+ *   bloqueados con motivo (no se descartan en silencio), advertencias de producción y destinos de TestRail.
  * - `POST /runs` con Idempotency-Key estable por intento; botón deshabilitado en vuelo; confirmación en producción.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -24,7 +24,7 @@ import { FilterChip, TagList } from '@/components/common/tag-chip';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { DirtyGuard } from '@/components/common/dirty-guard';
 import { EmptyState, ErrorState } from '@/components/common/states';
-import { catalogApi, envApi, itemsOf, runsApi, suitesApi } from '@/lib/api/endpoints';
+import { envApi, itemsOf, runsApi, suitesApi } from '@/lib/api/endpoints';
 import type { RunPreview } from '@/lib/api/types';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
@@ -33,7 +33,7 @@ import { reasonLabel } from '@/lib/labels';
 import { selection } from '@/lib/stores/selection';
 import { newIdempotencyKey, plural } from '@/lib/utils';
 import { CasePicker } from '@/features/suites/suite-form-page';
-import { DEFAULT_TAGS } from '@/features/catalog/catalog-page';
+import { useCaseAutomation, useCasesByIds, useKnownTags } from '@/features/common/derived';
 
 const route = getRouteApi('/_app/ejecuciones/nueva');
 
@@ -58,6 +58,7 @@ export function buildRunBody(v: Values): RunPreviewRequest | null {
 }
 
 export function NewRunPage() {
+  const knownTags = useKnownTags();
   const search = route.useSearch();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -232,7 +233,7 @@ export function NewRunPage() {
                     <form.Field name="tags">
                       {(f) => (
                         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Etiquetas (cualquiera)">
-                          {DEFAULT_TAGS.map((t) => (
+                          {knownTags.map((t) => (
                             <FilterChip key={t} tag={t} selected={f.state.value.includes(t)} onToggle={() => f.handleChange(f.state.value.includes(t) ? f.state.value.filter((x) => x !== t) : [...f.state.value, t])} />
                           ))}
                         </div>
@@ -262,7 +263,8 @@ export function NewRunPage() {
                         items={envList.map((e) => ({
                           value: e.id,
                           title: e.name,
-                          description: <span className="font-mono text-[12.5px]">{e.appUrl ?? ''}</span>,
+                          // `appUrl` solo llega en el detalle (admin); PENDIENTE [WEB→API-A] exponerlo en el resumen.
+                          description: 'appUrl' in e ? <span className="font-mono text-[12.5px]">{e.appUrl}</span> : <span className="text-[12.5px]">{e.isProduction ? 'Producción' : 'No productivo'}</span>,
                           badge: e.isProduction ? <span className="rounded-sm bg-failed-bg px-2 py-0.5 text-[12.5px] font-medium text-failed">Solo lectura</span> : undefined,
                         }))}
                       />
@@ -328,12 +330,8 @@ export function NewRunPage() {
 }
 
 function SelectedCases({ ids, plan, onChange }: { ids: string[]; plan: RunPreview | undefined; onChange: (v: string[]) => void }) {
-  const known = useQuery({
-    queryKey: qk.catalog.cases({ ids: ids.slice(0, 100) }),
-    queryFn: ({ signal }) => catalogApi.cases({ ids: ids.slice(0, 100), limit: 100 }, signal),
-    enabled: ids.length > 0,
-    retry: false,
-  });
+  const known = useCasesByIds(ids);
+  const automation = useCaseAutomation([...known.values()]);
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
   const all = Array.from(new Set([...ids, ...unchecked]));
   if (all.length === 0) {
@@ -349,7 +347,7 @@ function SelectedCases({ ids, plan, onChange }: { ids: string[]; plan: RunPrevie
       <ul className="max-h-[420px] overflow-y-auto rounded-lg border border-border" aria-label="Casos seleccionados">
         {all.map((id) => {
           const pc = plan?.cases.find((c) => c.caseId === id);
-          const kc = known.data?.items.find((c) => c.id === id);
+          const kc = known.get(id);
           const checked = ids.includes(id);
           return (
             <li key={id} className="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0">
@@ -372,7 +370,7 @@ function SelectedCases({ ids, plan, onChange }: { ids: string[]; plan: RunPrevie
                 <span className="rounded-sm bg-blocked-bg px-1.5 text-[12px] text-blocked">Bloqueado · {pc.blockReasons.map(reasonLabel).join(', ')}</span>
               ) : null}
               <span className="hidden sm:block">
-                <TagList tags={kc?.tags} max={3} />
+                <TagList tags={automation.get(id)?.tags} max={3} />
               </span>
             </li>
           );
@@ -433,8 +431,9 @@ function PlanPanel({
                 { k: 'Tests', v: plan.counts.executableTests },
                 { k: 'Cobertura', v: `${plan.counts.executableCases}/${plan.counts.cases} casos` },
                 { k: 'Commit', v: `main@${plan.gitCommit.slice(0, 7)}`, mono: true },
-                { k: 'Workers', v: plan.workers ?? '—' },
-                { k: 'Duración estimada', v: plan.estimatedDurationMs ? `~${Math.max(1, Math.round(plan.estimatedDurationMs / 60_000))} min` : '—' },
+                // La API no estima workers ni duración (no se inventan): se muestra si se abrirá navegador y a qué suites de TestRail se publicará.
+                { k: 'Navegador', v: plan.willLaunchBrowser ? 'Se ejecuta' : 'No se abrirá' },
+                { k: 'TestRail', v: plan.testrailTargets.length ? plan.testrailTargets.map((t) => t.name).join(', ') : '—' },
               ]}
             />
             {blocked.length > 0 || blockedTests.length > 0 ? (

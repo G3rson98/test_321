@@ -40,6 +40,9 @@ export function deliveryDetail(d: Delivery): string {
   return '–';
 }
 
+/** La API pagina por cursor sin `total`: se cuenta una página de 100 ("100+" si hay más). */
+const countLabel = (p: { items: unknown[]; hasNext: boolean }) => (p.hasNext ? `${p.items.length}+` : p.items.length);
+
 export function TestRailPage() {
   const search = route.useSearch();
   const navigate = route.useNavigate();
@@ -50,8 +53,8 @@ export function TestRailPage() {
   const poll = usePollingFallback('list');
 
   const syncRuns = useQuery({ queryKey: qk.testrail.syncRuns({ limit: 1 }), queryFn: ({ signal }) => testrailApi.syncRuns({ limit: 1 }, signal), refetchInterval: poll });
-  const pending = useQuery({ queryKey: qk.testrail.deliveries({ status: ['pendiente', 'en_proceso'], limit: 1 }), queryFn: ({ signal }) => testrailApi.deliveries({ status: ['pendiente', 'en_proceso'], limit: 1 }, signal) });
-  const failed = useQuery({ queryKey: qk.testrail.deliveries({ status: ['requiere_intervencion', 'vencida'], limit: 1 }), queryFn: ({ signal }) => testrailApi.deliveries({ status: ['requiere_intervencion', 'vencida'], limit: 1 }, signal) });
+  const pending = useQuery({ queryKey: qk.testrail.deliveries({ status: ['pendiente', 'en_proceso'], limit: 100 }), queryFn: ({ signal }) => testrailApi.deliveries({ status: ['pendiente', 'en_proceso'], limit: 100 }, signal) });
+  const failed = useQuery({ queryKey: qk.testrail.deliveries({ status: ['requiere_intervencion', 'vencida'], limit: 100 }), queryFn: ({ signal }) => testrailApi.deliveries({ status: ['requiere_intervencion', 'vencida'], limit: 100 }, signal) });
   const q = { status: search.estado, cursor: search.cursor, limit: search.limit };
   const list = useQuery({ queryKey: qk.testrail.deliveries(q), queryFn: ({ signal }) => testrailApi.deliveries(q, signal), placeholderData: keepPreviousData, refetchInterval: poll });
   const pager = useCursorHistory(JSON.stringify({ ...search, cursor: undefined }), search.cursor, (cursor) => void navigate({ search: (p) => ({ ...p, cursor }) }));
@@ -143,8 +146,8 @@ export function TestRailPage() {
           hint={last ? `${last.stats.linksRequiringReview} ${last.stats.linksRequiringReview === 1 ? 'requiere' : 'requieren'} revisión` : ' '}
           href="/catalogo"
         />
-        <KpiCard label="Entregas pendientes" loading={pending.isLoading} value={pending.data ? (pending.data.total ?? pending.data.items.length) : '—'} />
-        <KpiCard label="Entregas con error" loading={failed.isLoading} tone={(failed.data?.total ?? failed.data?.items.length ?? 0) > 0 ? 'failed' : 'default'} value={failed.data ? (failed.data.total ?? failed.data.items.length) : '—'} />
+        <KpiCard label="Entregas pendientes" loading={pending.isLoading} value={pending.data ? countLabel(pending.data) : '—'} />
+        <KpiCard label="Entregas con error" loading={failed.isLoading} tone={(failed.data?.items.length ?? 0) > 0 ? 'failed' : 'default'} value={failed.data ? countLabel(failed.data) : '—'} />
       </KpiGrid>
       <Card>
         <div className="flex min-h-[46px] items-center border-b border-border px-5 text-[15px] font-semibold tracking-tight">Cola de entregas</div>

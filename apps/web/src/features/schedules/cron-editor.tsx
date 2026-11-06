@@ -245,7 +245,7 @@ export function CronPreview({ value }: { value: CronValue }) {
   const debounced = useDebouncedValue(body, 300);
   const preview = useQuery({
     queryKey: qk.schedules.preview(debounced),
-    queryFn: ({ signal }) => schedulesApi.preview(debounced, signal),
+    queryFn: ({ signal }) => schedulesApi.preview(debounced!, signal),
     enabled: !!debounced,
     staleTime: 30_000,
     retry: false,
@@ -269,6 +269,13 @@ export function CronPreview({ value }: { value: CronValue }) {
           <Skeleton className="h-9" />
         ) : preview.isError ? (
           <Callout tone="danger" className="px-3 text-[13px]">{errorMessage(preview.error)}</Callout>
+        ) : preview.data?.issues.length ? (
+          // La API responde 200 con `issues` cuando la expresión no es válida (p. ej. intervalo menor al mínimo).
+          <div data-testid="cron-issues">
+            <Callout tone="danger" className="px-3 text-[13px]">
+              {preview.data.issues.map((i) => i.message).join(' ')}
+            </Callout>
+          </div>
         ) : (
           <div className="space-y-1.5" data-testid="cron-expressions">
             {preview.data?.cronExpressions.map((c) => (

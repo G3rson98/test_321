@@ -1,7 +1,7 @@
 /**
  * Funciones tipadas por recurso sobre el cliente único. Cada ruta, método, código de estado y forma de respuesta
  * corresponde a `apps/api/src/modules/<módulo>/routes.ts` (inventario `ROUTES` de @katalyst/shared/rbac). No hay
- * endpoints inventados: lo que la API no expone se deriva en el panel (`lib/api/derive.ts`).
+ * endpoints inventados: lo que la API no expone se deriva en el panel (`features/common/derived.ts`).
  */
 import type { z } from 'zod';
 import type {

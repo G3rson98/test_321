@@ -6,6 +6,13 @@
 import { addFinding, applyTextRules, isPlaceholder, isSensitiveName, type Finding } from './rules.js';
 import type { SanitizeOptions } from './text.js';
 
+/**
+ * Valor de query ya enmascarado seguido solo de puntuación de código (`?token=[REDACTED:x]}` al sanitizar
+ * `?token=${expr}` en el código fuente que Playwright incrusta en error-context.md / reporte HTML). Sin esto la
+ * verificación lo contaba como residual y bloqueaba la evidencia completa (D-052).
+ */
+const REDACTED_THEN_PUNCT_RE = /^\[REDACTED(?::[a-z_]+)?\][)}\]`;,.!]*$/;
+
 export interface VerificationResult {
   ok: boolean;
   findings: Finding[];
@@ -18,7 +25,7 @@ function walkJson(v: unknown, path: string, findings: Finding[], opts: SanitizeO
     // Parámetros de query sensibles dentro de URLs en cadenas.
     if (/[?&#][^=\s]+=/.test(v)) {
       for (const m of v.matchAll(/[?&#]([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g)) {
-        if (isSensitiveName(m[1]!) && m[2] && !isPlaceholder(m[2])) {
+        if (isSensitiveName(m[1]!) && m[2] && !isPlaceholder(m[2]) && !REDACTED_THEN_PUNCT_RE.test(m[2])) {
           addFinding(findings, 'sensitive_query', `${path || '$'}:${m[1]}`);
         }
       }

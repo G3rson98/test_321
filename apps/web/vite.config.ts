@@ -34,11 +34,11 @@ export default defineConfig({
     chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
+        // Solo React va a un chunk fijo (cache estable). Recharts NO se fuerza a un chunk manual: Rollup arrastraría
+        // a ese chunk dependencias compartidas (clsx, use-sync-external-store…) y lo volvería inicial. Al cargarse
+        // solo por import() (perf-chart), queda diferido de forma natural.
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-vendor')) return 'charts';
-            if (/node_modules\/(?:\.pnpm\/)?(react|react-dom|scheduler)[@/]/.test(id)) return 'react';
-          }
+          if (id.includes('node_modules') && /node_modules\/(?:\.pnpm\/)?(react|react-dom|scheduler)[@/]/.test(id)) return 'react';
           return undefined;
         },
       },

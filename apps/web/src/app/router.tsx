@@ -14,7 +14,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { PanelRole } from '@katalyst/shared/enums';
 import { sessionQuery } from '@/lib/auth/session';
 import { AppShell } from '@/components/layout/app-shell';
-import { NotFoundPage, RouteErrorPage } from '@/components/layout/error-pages';
+import { ForbiddenPage, NotFoundPage, RouteErrorPage } from '@/components/layout/error-pages';
 import { RoleGate } from '@/components/layout/role-gate';
 import {
   auditSearch,
@@ -239,7 +239,7 @@ const deviceLinkRoute = createRoute({
 const forbiddenRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/sin-permiso',
-  component: page(() => import('@/components/layout/error-pages'), 'ForbiddenPage'),
+  component: ForbiddenPage,
 });
 
 export const routeTree = rootRoute.addChildren([

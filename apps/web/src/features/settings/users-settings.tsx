@@ -123,11 +123,13 @@ function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   const save = useMutation({
     mutationFn: () => usersApi.create({ email: email.trim().toLowerCase(), name: name.trim(), role }),
     onSuccess: () => {
-      toast.success('Invitación enviada.');
+      // La API crea el usuario (no envía correo): define su contraseña con la recuperación o ingresa por SSO.
+      toast.success('Usuario creado. Puede ingresar por SSO o definir su contraseña con «¿Olvidaste tu contraseña?».');
       onSaved();
     },
     onError: (e) => {
       const f = fieldErrorsFrom(e);
+      if (isApiError(e) && e.code === 'EMAIL_TAKEN') f.email = 'Ya existe un usuario con ese correo.';
       setErrs(f);
       if (!Object.keys(f).length) toast.error(errorMessage(e));
     },
@@ -179,7 +181,7 @@ function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 
 function TokensCard() {
   const qc = useQueryClient();
-  const tokens = useQuery({ queryKey: qk.tokens.list(), queryFn: ({ signal }) => authApi.tokens(signal) });
+  const tokens = useQuery({ queryKey: qk.tokens.list(), queryFn: ({ signal }) => authApi.tokens({ limit: 100 }, signal) });
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<ApiToken | null>(null);
   const revoke = useMutation({
