@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- script de aceptación: respuestas JSON sin tipar */
 /**
  * Datos de carga para el ensayo RNF-REN-01 / ESP §17.5: 5.000 casos TestRail + 5.000 tests automatizados vinculados
  * (1:1) + historial razonable (corridas terminadas con resultados por test y por caso, intentos), programaciones
@@ -80,9 +81,15 @@ async function main(): Promise<void> {
     }
 
     // Catálogo: una revisión "completa" que agrupa los tests de carga.
-    const gitCommit = sha(`carga-${Date.now()}`).slice(0, 40);
-    const manifestHash = sha(`manifest-carga-${gitCommit}`);
-    const rev = await prisma.catalogRevision.create({ data: { status: 'completa', gitCommit, manifestHash, manifest: { schemaVersion: 1, tests: [] }, testCount: N_CASES, finishedAt: new Date() } });
+    // Se reutiliza la última revisión `completa` (crear una nueva sin manifiesto real la volvería la vigente y la
+    // admisión de corridas respondería MANIFEST_INVALID). Sin revisión previa se crea una marcada como antigua.
+    const rev =
+      (await prisma.catalogRevision.findFirst({ where: { status: 'completa' }, orderBy: { startedAt: 'desc' } })) ??
+      (await prisma.catalogRevision.create({
+        data: { status: 'completa', gitCommit: sha('carga').slice(0, 40), manifestHash: sha('manifest-carga'), manifest: { schemaVersion: 1, tests: [] }, testCount: 0, startedAt: new Date(0), finishedAt: new Date(0) },
+      }));
+    const gitCommit = rev.gitCommit;
+    const manifestHash = rev.manifestHash;
 
     const now = Date.now();
     const cases: any[] = [];
@@ -114,7 +121,7 @@ async function main(): Promise<void> {
         filePath: `tests/carga/${area}/caso-${i + 1}.spec.ts`,
         title: `C${trCaseId} ${title} @carga @${area}`,
         tags: ['@carga', `@${area}`, ...(i % 7 === 0 ? ['@humo'] : [])],
-        classification: i % 20 === 0 ? 'escritura_idempotente' : 'lectura',
+        classification: i % 20 === 0 ? 'escritura' : 'lectura',
         status: 'aprobado',
         parameterKeys: ['default'],
         writeIdempotencyApproved: i % 20 === 0,
@@ -131,6 +138,8 @@ async function main(): Promise<void> {
     log(`${cases.length} casos, ${tests.length} tests y ${links.length} vínculos creados (${Date.now() - t0} ms)`);
 
     // Historial: corridas terminadas en los últimos 30 días.
+    const template = await prisma.run.findFirst({ where: { trigger: 'manual', NOT: { selectionSnapshot: { equals: {} } } }, orderBy: { createdAt: 'asc' }, select: { selectionSnapshot: true } });
+    const templateSnapshot = template?.selectionSnapshot ?? null;
     const runs: any[] = [];
     const results: any[] = [];
     const attempts: any[] = [];
@@ -159,7 +168,8 @@ async function main(): Promise<void> {
         status: 'terminada',
         outcome: failed > 0 ? 'fallido' : 'pasado',
         syncStatus: r % 4 === 0 ? 'no_aplica' : 'sincronizada',
-        selectionSnapshot: { caseIds: idxs.map((i) => cases[i].id) },
+        // Forma real del snapshot (copiada de una corrida existente) para que el detalle de la corrida sea válido.
+        selectionSnapshot: templateSnapshot ?? { kind: 'funcional', cases: [], tests: [], caseIds: idxs.map((i) => cases[i].id) },
         retries: 1,
         catalogRevisionId: rev.id,
         manifestHash,
@@ -183,9 +193,10 @@ async function main(): Promise<void> {
       const caseIds = [cases[(s * 41) % N_CASES].id, cases[(s * 41 + 1) % N_CASES].id];
       schedules.push({
         name: `Carga ${pick(AREAS, s)} ${String(s + 1).padStart(3, '0')}`,
-        selector: { caseIds },
+        selector: { kind: 'cases', caseIds },
         environmentId: env.id,
         cronExpressions: [`${s % 60} ${3 + (s % 4)} * * 1-5`],
+        notify: { onFailure: true, onInterruption: true, channels: [] },
         timezone: 'America/La_Paz',
         enabled: false,
         pausedAt: new Date(),

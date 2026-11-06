@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- script de aceptación: respuestas JSON sin tipar */
 /**
  * Verificación extremo a extremo del stack LOCAL (scripts/dev-stack.sh + scripts/seed-dev.ts) solo por HTTP:
  * login → sync TestRail (falso) → refresh de catálogo (catalog-listing en el supervisor) → preview → corrida manual

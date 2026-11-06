@@ -651,3 +651,28 @@ número libre.
 - **Presupuesto RNF-OPT-03:** `pnpm --filter @katalyst/web size` construye y falla si el JS inicial (script de
   entrada + modulepreload + imports estáticos) supera 250 KiB gzip. Recharts ya no va a un `manualChunk` (Rollup
   arrastraba dependencias compartidas y lo volvía inicial); queda diferido por `import()`. Medido: 203 KiB inicial.
+
+## D-053 — Integración y aceptación local: correcciones detectadas en los ensayos
+2026-11-06 · INTEGRACIÓN
+- **Verificador de sanitización (`packages/shared/src/sanitize/verify.ts`):** un parámetro de query sensible cuyo
+  valor ya está enmascarado y va seguido solo de puntuación de código (`?token=[REDACTED:x]}` al sanitizar
+  ``?token=${expr}`` en el código fuente que Playwright incrusta en `error-context.md` y en el reporte HTML) ya no
+  cuenta como hallazgo residual. Antes bloqueaba (fail-closed) el log de la falla y el reporte HTML completo sin que
+  contuvieran secretos. Un valor real tras el marcador (`[REDACTED]abc`, `[REDACTED]}secreto`) sigue bloqueando.
+  Prueba: `packages/shared/test/sanitize.test.ts` («D-053…»).
+- **Trazas sin píxeles (`apps/runner/src/executor/artifacts/sanitize-artifact.ts`):** al sanitizar un ZIP se
+  eliminan las entradas `screencast/*.(jpe?g|png|webp)` (fotogramas de página completa de las trazas de
+  Playwright), que el ensayo de canarios mostró con datos sensibles visibles y que no pueden sanitizarse. El resto
+  de la traza (red, DOM, pasos, fuentes) se sanitiza como antes. Prueba: `apps/runner/test/acceptance/trace-pixels.test.ts`.
+  Las capturas (`captura`) NO se modifican: siguen deshabilitadas por defecto y solo deben habilitarse con datos
+  sintéticos hasta implementar enmascaramiento visual (docs/aceptacion/seguridad.md §2.1).
+- **N+1 en `GET /schedules` (`apps/api/src/services/scheduler.ts`, `modules/schedules/routes.ts`):** la última
+  ocurrencia de cada programación se consultaba por fila (101 consultas con `limit=100`). Ahora
+  `lastOccurrencesFor()` la obtiene en una sola consulta `DISTINCT ON (schedule_id)` sobre el índice único
+  `(schedule_id, scheduled_for)`; `toScheduleDto` acepta el valor precargado (los endpoints de un elemento siguen
+  consultando). Medido con `scripts/load/explain-queries.ts`: 3 consultas con `limit=10` y con `limit=100`.
+  Prueba: `apps/api/test/acceptance/schedules-list-batch.test.ts`.
+- **gitleaks:** `[allowlist]` convertido a `[[allowlists]]` y excepciones acotadas por regla para fixtures
+  sintéticos de pruebas, `stableKey` UUID y el mock MSW del panel (docs/aceptacion/seguridad.md §1).
+- **Stack local y ensayos** (`scripts/`): `dev-stack.sh`, `fake-testrail.mjs`, `fake-deltax.mjs`, `seed-dev.ts`,
+  `e2e-local.ts`, `aceptacion-canarios.ts`, `load/*`, `backup-restore-local.sh`; resultados en `docs/aceptacion/`.

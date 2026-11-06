@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global process, URL, console */
 /**
  * Fixture HTML LOCAL que imita lo mínimo de FMS DeltaX para que qa-tests corra de punta a punta sin tocar
  * producción (cbc.deltax.la / fmsapi.deltax.la): formulario de login (etiquetas «Usuario»/«Contraseña», botón

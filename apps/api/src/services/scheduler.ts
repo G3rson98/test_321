@@ -114,11 +114,41 @@ export function compileSchedule(
 
 type ScheduleWithRefs = ScheduleRow & { createdBy: { id: string; name: string } | null };
 
-export async function toScheduleDto(db: Db, s: ScheduleWithRefs, now: Date): Promise<Schedule> {
-  const last = await db.scheduleOccurrence.findFirst({
-    where: { scheduleId: s.id },
-    orderBy: { scheduledFor: 'desc' },
-  });
+/** Última ocurrencia de cada programación. */
+export interface LastOccurrenceRow {
+  scheduledFor: Date;
+  status: Schedule extends { lastOccurrence: infer L } ? (L extends { status: infer S } ? S : never) : never;
+  reason: Schedule extends { lastOccurrence: infer L } ? (L extends { reason: infer R } ? R : never) : never;
+  runId: string | null;
+}
+
+/**
+ * Últimas ocurrencias de varias programaciones en UNA consulta (`DISTINCT ON` sobre el índice único
+ * `(schedule_id, scheduled_for)`). Evita el N+1 del listado `GET /schedules` (RNF-OPT-05, D-053).
+ */
+export async function lastOccurrencesFor(db: Db, scheduleIds: string[]): Promise<Map<string, LastOccurrenceRow>> {
+  if (scheduleIds.length === 0) return new Map();
+  const rows = await db.$queryRaw<(LastOccurrenceRow & { scheduleId: string })[]>`
+    SELECT DISTINCT ON (schedule_id) schedule_id AS "scheduleId", scheduled_for AS "scheduledFor",
+           status::text AS status, reason::text AS reason, run_id AS "runId"
+      FROM schedule_occurrence
+     WHERE schedule_id = ANY(${scheduleIds}::uuid[])
+     ORDER BY schedule_id, scheduled_for DESC`;
+  return new Map(rows.map(({ scheduleId, ...r }) => [scheduleId, r]));
+}
+
+/**
+ * DTO de programación. `prefetchedLast`: última ocurrencia ya consultada en lote (`lastOccurrencesFor`; `null` =
+ * sin ocurrencias); si se omite se consulta aquí (endpoints de un solo elemento).
+ */
+export async function toScheduleDto(db: Db, s: ScheduleWithRefs, now: Date, prefetchedLast?: LastOccurrenceRow | null): Promise<Schedule> {
+  const last =
+    prefetchedLast !== undefined
+      ? prefetchedLast
+      : await db.scheduleOccurrence.findFirst({
+          where: { scheduleId: s.id },
+          orderBy: { scheduledFor: 'desc' },
+        });
   const active = s.enabled && !s.deletedAt;
   return {
     id: s.id,

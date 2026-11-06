@@ -42,6 +42,7 @@ import {
   scheduleNext,
   setSchedulePaused,
   toScheduleDto,
+  lastOccurrencesFor,
   updateSchedule,
 } from '../../services/scheduler.js';
 import { principalOf, scheduleDepsOf } from '../runs/deps.js';
@@ -113,7 +114,9 @@ export const schedulesRoutes: FastifyPluginAsyncZod = async (app) => {
       });
       const now = new Date();
       const page = paginateMapped(rows, q.limit, sort, (r) => r);
-      return { ...page, items: await Promise.all(page.items.map((r) => toScheduleDto(app.deps.prisma, r, now))) };
+      // Últimas ocurrencias en una sola consulta (sin N+1, RNF-OPT-05).
+      const lasts = await lastOccurrencesFor(app.deps.prisma, page.items.map((r) => r.id));
+      return { ...page, items: await Promise.all(page.items.map((r) => toScheduleDto(app.deps.prisma, r, now, lasts.get(r.id) ?? null))) };
     },
   );
 

@@ -100,6 +100,9 @@ export function printableStrings(buf: Buffer, min = 6): string {
   return out.join('\n');
 }
 
+/** Entradas `screencast/*.jpeg|png` de una traza (fotogramas de la página, píxeles no sanitizables). */
+export const SCREENCAST_FRAME_RE = /(^|\/)screencast\/[^/]+\.(?:jpe?g|png|webp)$/i;
+
 const BLOB_RE = /data:(application\/(?:zip|json)|text\/(?:html|plain));base64,([A-Za-z0-9+/=]+)/g;
 const PW_REPORT_MARKER = 'id="playwrightReportBase64"';
 
@@ -216,6 +219,13 @@ export function sanitizeBuffer(
         for (const entry of entries) {
           if (entry.isDirectory) {
             out.push(entry);
+            continue;
+          }
+          // Fotogramas del screencast de una traza de Playwright: son píxeles de la página completa (equivalen a
+          // capturas) y no pueden sanitizarse; se eliminan para que la traza solo publique formatos verificables
+          // (ESP §13.7; hallazgo del ensayo de canarios, D-053). El visor de trazas funciona sin la tira de imágenes.
+          if (SCREENCAST_FRAME_RE.test(entry.name)) {
+            masked += 1;
             continue;
           }
           const r = sanitizeBuffer(entry.name, '', entry.data, opts, depth + 1);

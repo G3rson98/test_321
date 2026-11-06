@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- script de aceptación: respuestas JSON sin tipar */
 /**
  * Cliente HTTP mínimo de la API de Katalyst para scripts locales (Node 24 con type stripping nativo: solo sintaxis
  * TypeScript borrable). Sesión por cookie + token CSRF del login (ESP §13.7). Nunca imprime cookies ni contraseñas.

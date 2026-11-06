@@ -19,7 +19,18 @@
     "coverage": "pnpm -r --if-present run coverage",
     "db:migrate": "pnpm --filter @katalyst/api run db:migrate",
     "db:generate": "pnpm --filter @katalyst/api run db:generate",
-    "secrets:scan": "gitleaks detect --no-git --source . --config .gitleaks.toml --redact"
+    "secrets:scan": "gitleaks detect --no-git --source . --config .gitleaks.toml --redact",
+    "secrets:scan:git": "gitleaks git --config .gitleaks.toml --redact .",
+    "dev:stack": "scripts/dev-stack.sh start",
+    "dev:stack:stop": "scripts/dev-stack.sh stop",
+    "dev:stack:status": "scripts/dev-stack.sh status",
+    "dev:seed": "node scripts/seed-dev.ts",
+    "dev:e2e": "node scripts/e2e-local.ts",
+    "accept:canarios": "node scripts/aceptacion-canarios.ts",
+    "load:seed": "node scripts/load/seed-5000.ts",
+    "load:run": "node scripts/load/run-load.ts",
+    "load:explain": "node --conditions=source --import ./apps/api/node_modules/tsx/dist/loader.mjs scripts/load/explain-queries.ts",
+    "backup:local": "scripts/backup-restore-local.sh"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

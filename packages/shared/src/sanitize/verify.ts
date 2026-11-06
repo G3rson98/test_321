@@ -9,7 +9,7 @@ import type { SanitizeOptions } from './text.js';
 /**
  * Valor de query ya enmascarado seguido solo de puntuación de código (`?token=[REDACTED:x]}` al sanitizar
  * `?token=${expr}` en el código fuente que Playwright incrusta en error-context.md / reporte HTML). Sin esto la
- * verificación lo contaba como residual y bloqueaba la evidencia completa (D-052).
+ * verificación lo contaba como residual y bloqueaba la evidencia completa (D-053).
  */
 const REDACTED_THEN_PUNCT_RE = /^\[REDACTED(?::[a-z_]+)?\][)}\]`;,.!]*$/;
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global process, Buffer, URL, URLSearchParams, console */
 /**
  * TestRail FALSO para desarrollo/aceptación local (NO usar contra producción). Implementa en memoria el subconjunto
  * de la API v2 que usa `apps/api/src/adapters/testrail/http-client.ts`:
@@ -278,7 +279,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/_fake/')) {
       const op = url.pathname.slice('/_fake/'.length);
       if (op === 'state' && req.method === 'GET') {
-        return send(res, 200, { ...state, cases: undefined, caseCount: state.cases.length, attachments: state.attachments.map(({ path: _p, ...a }) => a) });
+        return send(res, 200, { ...state, cases: undefined, caseCount: state.cases.length, // eslint-disable-next-line @typescript-eslint/no-unused-vars -- se omite la ruta local del adjunto
+        attachments: state.attachments.map(({ path: _p, ...a }) => a) });
       }
       if (op === 'reset' && req.method === 'POST') {
         reset();

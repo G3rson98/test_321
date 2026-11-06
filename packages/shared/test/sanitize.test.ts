@@ -297,7 +297,7 @@ describe('RNF-SEG-02 verifySanitized bloquea publicación con hallazgos', () => 
     expect(verifySanitized({ u: 'https://x.la/?token=%5BREDACTED%5D' }).ok).toBe(true);
     expect(verifySanitized('known Qa#2026', { knownSecrets: ['Qa#2026'] }).findings[0]!.kind).toBe('known_secret');
   });
-  it('D-052: código fuente con `?token=${expr}` (error-context.md de Playwright) queda verificado tras sanitizar', () => {
+  it('D-053: código fuente con `?token=${expr}` (error-context.md de Playwright) queda verificado tras sanitizar', () => {
     const src = 'await page.goto(`/canario?token=${encodeURIComponent(datos.accessToken)}`);';
     const { value } = sanitizeText(src);
     expect(value).not.toContain('encodeURIComponent(datos');

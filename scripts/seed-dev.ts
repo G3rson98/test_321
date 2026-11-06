@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- script de aceptación: respuestas JSON sin tipar */
 /**
  * Semilla del stack LOCAL (scripts/dev-stack.sh debe estar corriendo). Idempotente.
  *   1. Administrador inicial (contraseña por STDIN; nunca como argumento) vía `bootstrap-admin --password-stdin`.

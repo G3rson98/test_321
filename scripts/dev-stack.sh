@@ -17,6 +17,7 @@
 #   REDIS_URL (default redis://localhost:6379/0) · QUEUE_PREFIX (default katalyst-dev)
 #   KATALYST_STACK_DIR (default ${TMPDIR:-/tmp}/katalyst-dev-stack) · API_PORT 3000 · REPORTS_PORT 3001
 #   FAKE_TESTRAIL_PORT 4010 · FAKE_DELTAX_PORT 4020 · FAKE_TESTRAIL_EXTRA_CASES 600 · FAKE_DELTAX_CANARIES (JSON)
+#   RATE_LIMIT_MAX (default 300; el ensayo de carga lo sube: 10 usuarios comparten la IP de loopback)
 # Después de `start`: `node scripts/seed-dev.ts < archivo-con-clave-admin` (o `pnpm dev:seed`).
 # =============================================================================
 set -euo pipefail
@@ -91,6 +92,7 @@ SSRF_ALLOW_LOOPBACK=true
 SSRF_ALLOW_HTTP=true
 ALLOWED_TARGET_HOSTS=127.0.0.1,localhost
 OUTBOX_POLL_MS=${OUTBOX_POLL_MS:-2000}
+RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-300}
 SCHEDULER_TICK_MS=${SCHEDULER_TICK_MS:-5000}
 HEALTH_FILE=$STACK_DIR/health/control
 DEFAULT_TIMEZONE=America/La_Paz
