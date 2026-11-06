@@ -18,9 +18,12 @@ import {
   bullmqCatalogEnqueuer,
   closeCatalogQueue,
   ingestCatalogListing,
+  recomputeFlakyForRun,
   recomputeFlakyScores,
+  recomputeRecentFlakyScores,
   setCatalogListingEnqueuer,
 } from '../src/modules/catalog/service.js';
+import { applyCatalogListing, MAX_LISTING_BYTES } from '../src/modules/catalog/listing.js';
 import { resolveSuiteSelector } from '../src/modules/suites/service.js';
 import { syncNow } from '../src/modules/testrail/sync.js';
 import { actorMatrix, loginAs, makeCtx, type TestCtx } from './support/api-a.js';
@@ -159,6 +162,40 @@ describe('refresco del catálogo (RF-CAT-01, RF-CAT-05)', () => {
     expect(revs.json().items).toHaveLength(2);
   });
 
+  it('RF-CAT-01 POST /worker/catalog/listing: solo el supervisor entrega el listado; se aplica y repetir es idempotente', async () => {
+    const id = await refresh();
+    const m = manifestFor([
+      { key: k1, file: 'tests/oc/abrir-renombrado.spec.ts', title: `C${cases[0]!.trCaseId} Abrir órdenes (renombrado) @oc`, cases: [`C${cases[0]!.trCaseId}`], tags: ['@oc'] },
+    ]);
+    const payload = { catalogRevisionId: id, gitCommit: SHA, error: null, ...m };
+    const actors = await actorMatrix(ctx);
+    for (const [actor, status] of Object.entries({ dev: 403, admin: 403, anonimo: 401 })) {
+      const r = await ctx.app.inject({ method: 'POST', url: '/api/v1/worker/catalog/listing', headers: actors[actor as keyof typeof actors], payload });
+      expect(r.statusCode, actor).toBe(status);
+    }
+    const bad = await ctx.app.inject({ method: 'POST', url: '/api/v1/worker/catalog/listing', headers: actors.servicio, payload: { ...payload, gitCommit: 'x' } });
+    expect(bad.statusCode).toBe(422);
+    const ok = await ctx.app.inject({ method: 'POST', url: '/api/v1/worker/catalog/listing', headers: actors.servicio, payload });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toEqual({ ok: true, status: 'completa' });
+    const again = await ctx.app.inject({ method: 'POST', url: '/api/v1/worker/catalog/listing', headers: actors.servicio, payload });
+    expect(again.json()).toEqual({ ok: true, status: 'completa' });
+    const audit = await ctx.prisma.auditLog.findFirstOrThrow({ where: { entityId: id, action: 'catalog.refresh' }, orderBy: { createdAt: 'desc' } });
+    expect(audit.actorKind).toBe('servicio');
+    // Llamada directa con principal no-servicio (defensa en profundidad) y cuerpo inválido.
+    await expect(applyCatalogListing(ctx.prisma, payload, { kind: 'panel_user', id: randomUUID(), role: 'admin', email: 'a@b.test', sessionId: 's' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(applyCatalogListing(ctx.prisma, { nada: 1 }, { kind: 'service', id: randomUUID(), scopes: ['worker.claim'] })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+  });
+
+  it('RF-CAT-01 listado que excede el tamaño máximo se registra como revisión fallida', async () => {
+    const id = await refresh();
+    const huge = { suites: [{ title: 'x'.repeat(MAX_LISTING_BYTES + 1), specs: [] }] };
+    const r = await applyCatalogListing(ctx.prisma, { catalogRevisionId: id, gitCommit: SHA, error: null, manifest: null, playwrightList: huge }, { kind: 'service', id: randomUUID(), scopes: ['worker.claim'] });
+    expect(r.status).toBe('fallida');
+    const rev = await ctx.prisma.catalogRevision.findUniqueOrThrow({ where: { id } });
+    expect(JSON.stringify(rev.errors)).toContain('LISTADO_FALLIDO');
+  });
+
   it('RF-TR-07 revisión de vínculo: requiere la revisión vigente del caso; dev sí, qa no; auditada', async () => {
     const link = await ctx.prisma.testCaseLink.findFirstOrThrow({ where: { automatedTestId: t1Id } });
     await ctx.prisma.testCaseLink.update({ where: { id: link.id }, data: { reviewStatus: 'requiere_revision' } });
@@ -194,6 +231,12 @@ describe('refresco del catálogo (RF-CAT-01, RF-CAT-05)', () => {
       });
     }
     await recomputeFlakyScores(ctx.prisma, [t1Id]);
+    // Recalculo por corrida (finalización) y red de seguridad horaria.
+    const lastRun = await ctx.prisma.runResult.findFirstOrThrow({ where: { automatedTestId: t1Id }, orderBy: { createdAt: 'desc' } });
+    await ctx.prisma.automatedTest.update({ where: { id: t1Id }, data: { flakyScore: null, flakyDenominator: 0, flakyNumerator: 0 } });
+    expect(await recomputeFlakyForRun(ctx.prisma, lastRun.runId)).toBe(1);
+    expect((await ctx.prisma.automatedTest.findUniqueOrThrow({ where: { id: t1Id } })).flakyDenominator).toBe(12);
+    expect(await recomputeRecentFlakyScores(ctx.prisma, new Date(Date.now() - 3600_000))).toBeGreaterThanOrEqual(1);
     const t = await ctx.app.inject({ method: 'GET', url: `/api/v1/tests/${t1Id}`, headers: qa });
     expect(t.json().flaky).toMatchObject({ numerator: 3, denominator: 12, isFlaky: true });
     expect(t.json().lastResult.status).toBe('pasado');
@@ -259,7 +302,9 @@ describe('adaptadores Git y cola (RF-CAT-01)', () => {
     const config = { ...ctx.config, QUEUE_PREFIX: `katalyst-test-api-a-${randomUUID().slice(0, 6)}` };
     const id = randomUUID();
     await bullmqCatalogEnqueuer(config)({ catalogRevisionId: id, gitCommit: SHA });
-    const q = new Queue(config.CATALOG_LISTING_QUEUE, { connection: { host: '127.0.0.1', port: 6379, db: 1 }, prefix: config.QUEUE_PREFIX });
+    const u = new URL(config.REDIS_URL);
+    const connection = { host: u.hostname, port: Number(u.port || 6379), db: Number(u.pathname.slice(1) || 0) };
+    const q = new Queue(config.CATALOG_LISTING_QUEUE, { connection, prefix: config.QUEUE_PREFIX });
     const job = await q.getJob(id);
     expect(job?.data).toEqual({ catalogRevisionId: id, gitCommit: SHA });
     await q.obliterate({ force: true });

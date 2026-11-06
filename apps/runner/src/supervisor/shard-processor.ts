@@ -113,7 +113,10 @@ export class ShardProcessor {
       clock: this.d.clock,
       intervalMs: claim.heartbeatIntervalMs,
       logger: log,
-      onStop: (s) => (s.reason === 'cancel' ? entry.requestCancel(this.d.clock.now()) : entry.markLeaseLost()),
+      onStop: (s) =>
+        s.reason === 'cancel'
+          ? entry.requestCancel(this.d.clock.now(), s.cancelDeadlineAt ? Date.parse(s.cancelDeadlineAt) : null)
+          : entry.markLeaseLost(),
     });
     const elog = log.child({ leaseId: claim.leaseId });
     try {

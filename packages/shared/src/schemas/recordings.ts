@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { ClassificationSchema, DeviceAuthorizationStatusSchema, RecordingStatusSchema } from '../enums.js';
-import { CursorQuerySchema, IsoDateTimeSchema, TagSchema, UuidSchema } from './common.js';
+import { CursorQuerySchema, HttpUrlSchema, IsoDateTimeSchema, TagSchema, UuidSchema } from './common.js';
 
 export const RECORDING_TTL_MS = 2 * 60 * 60 * 1000;
 export const RECORDING_MAX_CODE_BYTES = 1024 * 1024;
@@ -147,3 +147,34 @@ export const DeviceHeartbeatRequestSchema = z.object({
   clientVersion: z.string().max(50),
   activeRecordingId: UuidSchema.nullable().default(null),
 });
+
+// ---------------------------------------------------------------------------
+// Contrato vigente de la API (API-C, D-028): enlace `katalyst://grabar?session=<id>` y detalle con ambiente.
+// `RecordingCreatedResponseSchema` (forma `katalyst://recording/<id>`) se conserva por compatibilidad; el asistente
+// acepta ambas formas. Usar estos esquemas en WEB/RECORDER.
+// ---------------------------------------------------------------------------
+
+/** Enlace del asistente con SOLO el ID de sesión (ESP §13.6). */
+export const RecordingAssistantLinkSchema = z.string().regex(/^katalyst:\/\/grabar\?session=[0-9a-f-]{36}$/);
+
+/** Ambiente resumido incluido en el detalle de una grabación (bloqueo de producción en el asistente). */
+export const RecordingEnvironmentSummarySchema = z.object({
+  id: UuidSchema,
+  name: z.string(),
+  appUrl: HttpUrlSchema.nullable(),
+  isProduction: z.boolean(),
+  recordingAllowed: z.boolean(),
+  enabled: z.boolean(),
+});
+
+/** `GET /recordings/{id}`: sesión + ambiente. */
+export const RecordingDetailSchema = RecordingSessionSchema.extend({ environment: RecordingEnvironmentSummarySchema });
+export type RecordingDetail = z.infer<typeof RecordingDetailSchema>;
+
+/** `POST /recordings` → 201. */
+export const RecordingCreatedSchema = z.object({
+  recording: RecordingDetailSchema,
+  assistantLink: RecordingAssistantLinkSchema,
+  assistant: z.object({ linked: z.boolean(), online: z.boolean(), installUrl: z.string().nullable() }),
+});
+export type RecordingCreated = z.infer<typeof RecordingCreatedSchema>;

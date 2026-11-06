@@ -76,7 +76,18 @@ export const ShardAssignmentSchema = z.object({
   gitCommit: GitCommitShaSchema,
   manifestHash: Sha256HexSchema,
   tests: z.array(AssignedTestSchema).min(1),
-  environment: z.object({ appUrl: z.string(), apiUrl: z.string(), isProduction: z.boolean() }),
+  environment: z.object({
+    appUrl: z.string(),
+    apiUrl: z.string(),
+    isProduction: z.boolean(),
+    /** Project de Playwright = `KATALYST_ENV_NAME` (slug del nombre del ambiente; nunca `setup`). */
+    name: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9_-]{0,62}$/)
+      .refine((v) => v !== 'setup')
+      .optional(),
+    id: UuidSchema.optional(),
+  }),
   /** Solo para el supervisor: resuelve el secreto y lo monta en tmpfs (nunca en argv/env visibles). */
   testUserRef: z
     .object({ testUserId: UuidSchema, username: z.string(), secretRef: SecretRefSchema, readOnly: z.boolean() })

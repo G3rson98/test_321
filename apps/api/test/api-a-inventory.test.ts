@@ -11,7 +11,7 @@ import { outboxPublisherLoop } from '../src/control/outbox-publisher.js';
 import { getOutboxHandler } from '../src/lib/outbox.js';
 import { MemorySecretProvider } from '../src/lib/secrets.js';
 import { createLogger } from '../src/logger.js';
-import { makeWorld } from './support/testrail-fixture.js';
+import { createConnection, makeWorld } from './support/testrail-fixture.js';
 
 const MINE = new Set(['auth', 'users', 'audit', 'testrail', 'catalog', 'suites', 'environments', 'integrations', 'health']);
 let ctx: TestCtx;
@@ -60,15 +60,24 @@ describe('proceso de control (RF-TR-02, RF-TR-08)', () => {
     expect(getOutboxHandler('testrail.close_run')).toBeDefined();
     const loop = testrailSyncLoop(deps);
     expect(loop).toMatchObject({ name: 'sync_testrail', intervalMs: ctx.config.TESTRAIL_SYNC_INTERVAL_MS });
-    const conn = await ctx.prisma.testRailConnection.findFirst({ orderBy: { createdAt: 'asc' } });
-    if (conn) {
-      await ctx.prisma.testRailConnection.update({ where: { id: conn.id }, data: { projectExternalId: w.projectId, enabled: true } });
-      expect(await runScheduledTestRailSync(deps)).toBe('exitosa');
-      await loop.tick({ logger: deps.logger, now: new Date() });
-      await ctx.prisma.testRailConnection.update({ where: { id: conn.id }, data: { enabled: false } });
-      expect(await runScheduledTestRailSync(deps)).toBeNull();
-      await ctx.prisma.testRailConnection.update({ where: { id: conn.id }, data: { enabled: true } });
-    }
+    const conn =
+      (await ctx.prisma.testRailConnection.findFirst({ orderBy: { createdAt: 'asc' } })) ?? (await createConnection(ctx.prisma, w.projectId));
+    const original = { projectExternalId: conn.projectExternalId, enabled: conn.enabled };
+    await ctx.prisma.testRailConnection.update({ where: { id: conn.id }, data: { projectExternalId: w.projectId, enabled: true } });
+    expect(await runScheduledTestRailSync(deps)).toBe('exitosa');
+    await loop.tick({ logger: deps.logger, now: new Date() });
+    // Sincronización en curso: el tick no aplica (no falla).
+    const running = await ctx.prisma.testRailSyncRun.create({ data: { connectionId: conn.id, trigger: 'manual', status: 'en_curso' } });
+    expect(await runScheduledTestRailSync(deps)).toBeNull();
+    await ctx.prisma.testRailSyncRun.update({ where: { id: running.id }, data: { status: 'fallida', finishedAt: new Date() } });
+    // El recálculo de flaky score falla aislado sin impedir la sincronización.
+    const broken = new Proxy(ctx.prisma, {
+      get: (t, k) => (k === 'runResult' ? { findMany: () => Promise.reject(new Error('bd caída')) } : Reflect.get(t, k)),
+    });
+    expect(await runScheduledTestRailSync({ ...deps, prisma: broken })).toBe('exitosa');
+    await ctx.prisma.testRailConnection.update({ where: { id: conn.id }, data: { enabled: false } });
+    expect(await runScheduledTestRailSync(deps)).toBeNull();
+    await ctx.prisma.testRailConnection.update({ where: { id: conn.id }, data: original });
     const pub = outboxPublisherLoop({ prisma: ctx.prisma, logger: deps.logger, secrets: deps.secrets, operations: [] }, 5000);
     expect(pub.name).toBe('publicador_outbox');
     await pub.tick({ logger: deps.logger, now: new Date() });

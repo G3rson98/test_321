@@ -17,7 +17,12 @@ const k = <const T extends readonly unknown[]>(...parts: T) => [...parts, scope]
 export const qk = {
   session: () => ['session'] as const,
   authProviders: () => ['auth', 'providers'] as const,
-  dashboard: () => k('dashboard', 'summary'),
+  home: {
+    successRate: (f: Filters) => k('runs', 'home-success', f),
+    counts: (f: Filters) => k('runs', 'home-counts', f),
+    coverage: () => k('catalog', 'home-coverage'),
+    upcoming: () => k('schedules', 'home-upcoming'),
+  },
   catalog: {
     all: ['catalog'] as const,
     cases: (f: Filters) => k('catalog', 'cases', f),
@@ -26,7 +31,8 @@ export const qk = {
     sections: () => k('catalog', 'sections'),
     tags: () => k('catalog', 'tags'),
     test: (id: string) => k('catalog', 'test', id),
-    testSource: (id: string) => k('catalog', 'test-source', id),
+    tests: (f: Filters) => k('catalog', 'tests', f),
+    testHistory: (id: string, f: Filters) => k('catalog', 'test-history', id, f),
     search: (q: string) => k('catalog', 'search', q),
   },
   suites: {
@@ -47,6 +53,7 @@ export const qk = {
     results: (id: string, f: Filters) => k('runs', 'results', id, f),
     attempts: (id: string, resultId: string) => k('runs', 'attempts', id, resultId),
     caseResults: (id: string) => k('runs', 'case-results', id),
+    targets: (id: string) => k('runs', 'targets', id),
     artifacts: (id: string, resultId: string | null) => k('runs', 'artifacts', id, resultId),
     preview: (body: unknown) => k('runs', 'preview', body),
   },
@@ -62,7 +69,8 @@ export const qk = {
   perf: {
     all: ['perf'] as const,
     aggregates: (f: Filters) => k('perf', 'aggregates', f),
-    summary: (f: Filters) => k('perf', 'summary', f),
+    series: (f: Filters) => k('perf', 'series', f),
+    marks: (f: Filters) => k('perf', 'marks', f),
     errors: (f: Filters) => k('perf', 'errors', f),
     thresholds: (f: Filters) => k('perf', 'thresholds', f),
   },

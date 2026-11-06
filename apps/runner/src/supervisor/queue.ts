@@ -46,6 +46,10 @@ export interface ControlMessage {
   runId: string;
   shardIds: string[];
   leaseIds: string[];
+  /** Motivo informado por la API (p. ej. `cancelado_por_usuario`, `timeout_corrida`, `lease_vencido`). */
+  reason: string | null;
+  /** Límite para tener detenido el árbol de procesos (epoch ms; `null` si no vino o no es válido). */
+  deadlineAtMs: number | null;
 }
 
 const ControlMessageSchema = z.object({
@@ -53,6 +57,9 @@ const ControlMessageSchema = z.object({
   runId: UuidSchema,
   shardIds: z.array(UuidSchema).max(1000).default([]),
   leaseIds: z.array(UuidSchema).max(1000).default([]),
+  reason: z.string().max(200).nullish(),
+  requestedAt: z.string().max(64).nullish(),
+  deadlineAt: z.string().max(64).nullish(),
 });
 
 /** Parseo del mensaje de control (RunControlMessage, `{runId}` o UUID plano). `null` si es inválido. */
@@ -65,7 +72,16 @@ export function parseControlMessage(message: string): ControlMessage | null {
   }
   if (typeof candidate === 'string') candidate = { runId: candidate };
   const r = ControlMessageSchema.safeParse(candidate);
-  return r.success ? r.data : null;
+  if (!r.success) return null;
+  const deadline = r.data.deadlineAt ? Date.parse(r.data.deadlineAt) : Number.NaN;
+  return {
+    type: r.data.type,
+    runId: r.data.runId,
+    shardIds: r.data.shardIds,
+    leaseIds: r.data.leaseIds,
+    reason: r.data.reason ?? null,
+    deadlineAtMs: Number.isFinite(deadline) ? deadline : null,
+  };
 }
 
 /** Compatibilidad: solo el `runId` de una cancelación. */
@@ -94,8 +110,11 @@ export class CancelSubscriber {
         this.logger.warn('mensaje de control inválido ignorado');
         return;
       }
-      const n = m.type === 'cancel' ? this.registry.cancelRun(m.runId, m.shardIds) : this.registry.revoke(m.runId, m.shardIds, m.leaseIds);
-      this.logger.warn({ runId: m.runId, type: m.type, shards: n }, 'mensaje de control recibido (pub/sub)');
+      const n =
+        m.type === 'cancel'
+          ? this.registry.cancelRun(m.runId, m.shardIds, m.deadlineAtMs)
+          : this.registry.revoke(m.runId, m.shardIds, m.leaseIds);
+      this.logger.warn({ runId: m.runId, type: m.type, reason: m.reason, shards: n }, 'mensaje de control recibido (pub/sub)');
     });
     await redis.subscribe(this.channel);
   }

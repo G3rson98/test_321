@@ -18,7 +18,7 @@ import { errorMessage, isApiError } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { formatTime } from '@/lib/format';
 
-const route = getRouteApi('/_app/asistente/vincular');
+const route = getRouteApi('/_app/dispositivos/vincular');
 const CODE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
 export function DeviceLinkPage() {

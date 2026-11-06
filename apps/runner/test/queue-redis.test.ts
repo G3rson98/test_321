@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CancelRegistry } from '../src/supervisor/cancel-registry.js';
+import { CANCEL_DEADLINE_MARGIN_MS, CancelRegistry } from '../src/supervisor/cancel-registry.js';
 import { CancelSubscriber, parseCancelMessage, parseControlMessage, startQueueWorker } from '../src/supervisor/queue.js';
 import { silentLogger } from './helpers/logger.js';
 
@@ -40,13 +40,37 @@ describe('parseControlMessage (contrato RunControlMessage de API-B)', () => {
     const id = randomUUID();
     const shard = randomUUID();
     const lease = randomUUID();
-    const msg = { type: 'revoke', runId: id, shardIds: [shard], leaseIds: [lease], reason: 'lease_vencido', requestedAt: new Date().toISOString(), deadlineAt: new Date().toISOString() };
-    expect(parseControlMessage(JSON.stringify(msg))).toEqual({ type: 'revoke', runId: id, shardIds: [shard], leaseIds: [lease] });
-    expect(parseControlMessage(JSON.stringify({ runId: id }))).toEqual({ type: 'cancel', runId: id, shardIds: [], leaseIds: [] });
+    const deadline = new Date(Date.now() + 30_000);
+    const msg = { type: 'revoke', runId: id, shardIds: [shard], leaseIds: [lease], reason: 'lease_vencido', requestedAt: new Date().toISOString(), deadlineAt: deadline.toISOString() };
+    expect(parseControlMessage(JSON.stringify(msg))).toEqual({
+      type: 'revoke',
+      runId: id,
+      shardIds: [shard],
+      leaseIds: [lease],
+      reason: 'lease_vencido',
+      deadlineAtMs: deadline.getTime(),
+    });
+    expect(parseControlMessage(JSON.stringify({ runId: id }))).toEqual({ type: 'cancel', runId: id, shardIds: [], leaseIds: [], reason: null, deadlineAtMs: null });
+    expect(parseControlMessage(JSON.stringify({ runId: id, deadlineAt: 'no-es-fecha' }))?.deadlineAtMs).toBeNull();
     expect(parseCancelMessage(id)).toBe(id);
     expect(parseControlMessage('{"runId":"x"}')).toBeNull();
     expect(parseControlMessage('{"type":"rm","runId":"' + id + '"}')).toBeNull();
     expect(parseCancelMessage('rm -rf /')).toBeNull();
+  });
+
+  it('cancel con deadlineAt acota la gracia SIGTERM→SIGKILL para detener antes del límite (D-049)', () => {
+    const now = 1_000_000;
+    const registry = new CancelRegistry(15_000, () => now);
+    const runId = randomUUID();
+    const near = registry.register(runId, randomUUID(), randomUUID());
+    const far = registry.register(randomUUID(), randomUUID(), randomUUID());
+    const none = registry.register(randomUUID(), randomUUID(), randomUUID());
+    registry.cancelRun(runId, [], now + 10_000);
+    expect(near.cancelGraceMs).toBe(10_000 - CANCEL_DEADLINE_MARGIN_MS);
+    registry.cancelRun(far.runId, [], now + 60_000);
+    expect(far.cancelGraceMs).toBe(15_000);
+    registry.cancelRun(none.runId, [], now - 5_000);
+    expect(none.cancelGraceMs).toBe(500);
   });
 });
 

@@ -38,3 +38,19 @@ export const GenerationRequestSchema = z.object({
   finishedAt: IsoDateTimeSchema.nullable(),
 });
 export type GenerationRequest = z.infer<typeof GenerationRequestSchema>;
+
+/** `GET /generate/{id}` y respuestas de `POST /generate[/review]`: resultado con rama/PR/archivo (API-C, D-029). */
+export const GenerationDetailSchema = GenerationRequestSchema.extend({
+  result: z
+    .object({
+      code: z.string(),
+      todos: z.number().int().nonnegative(),
+      changes: z.array(z.string()),
+      needsHumanReview: z.array(z.string()),
+      branch: z.string().nullable(),
+      prUrl: z.string().nullable(),
+      file: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type GenerationDetail = z.infer<typeof GenerationDetailSchema>;

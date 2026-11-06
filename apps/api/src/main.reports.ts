@@ -86,6 +86,9 @@ export function buildReportsApp(config: Config, deps?: ReportsDeps): FastifyInst
   // Emulación de URLs firmadas del almacén fs (solo desarrollo).
   if (deps.store instanceof FsArtifactStore) {
     const fsStore = deps.store;
+    // Los parsers integrados (application/json, text/plain) ganan a '*': en este alcance se reemplazan todos para
+    // recibir el cuerpo crudo como Buffer (checksum exacto) sea cual sea el tipo (logs, reporte JSON, capturas).
+    app.removeAllContentTypeParsers();
     app.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: MAX_ARTIFACT_BYTES }, (_req, body, done) => done(null, body));
     app.put<{ Params: { '*': string }; Querystring: Record<string, string> }>(
       '/_store/*',

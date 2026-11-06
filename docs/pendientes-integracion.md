@@ -44,7 +44,7 @@ Contratos acordados entre áreas (fase 1). Los agentes de API, runner, panel y g
   `policyFromConfig`), `crypto-tokens.ts` (`generateOpaqueToken(kind)`, `hashToken`, `tokenKindOf`, `hashPassword`,
   `verifyPassword`, `randomUserCode`, `safeEqual`). Publicador genérico: `src/control/outbox-publisher.ts`
   (`runOutboxPublisherTick`, `outboxPublisherLoop`, `adminRetryDelivery`).
-- [API-A→API-B] Tokens de lease: generarlos con `generateOpaqueToken('lease')` (prefijo `kls_`) y guardar
+- [RESUELTO] [API-A→API-B] Tokens de lease (verificado 2026-11-06: `services/leases.ts` usa `generateOpaqueToken('lease')` + `hashToken`): generarlos con `generateOpaqueToken('lease')` (prefijo `kls_`) y guardar
   `hashToken(token)` en `worker_lease.token_hash`; `authPlugin` los resuelve a `{kind:'lease', ...}` hasta 24 h tras la
   emisión aunque estén revocados (para acuses repetidos): los handlers del worker validan vigencia/generación.
   Credencial del supervisor: `api_credential` kind `servicio_supervisor`, token `ksv_…`, scopes `['worker.claim']`.
@@ -52,24 +52,24 @@ Contratos acordados entre áreas (fase 1). Los agentes de API, runner, panel y g
   (`generateOpaqueToken('device')`), `Device.credentialId`; `authPlugin` la resuelve a `{kind:'device'}` con permisos
   `recordings.create|recordings.read`. Para el código de usuario usar `randomUserCode()` y `generateOpaqueToken('deviceCode')`.
 
-- [API-C→API-B] **Importación de rendimiento:** _(ya integrado por API-B: verificado 2026-11-06)_ en `POST /worker/perf/samples` (lease vigente) llamar
+- [RESUELTO] [API-C→API-B] **Importación de rendimiento:** _(ya integrado por API-B: verificado 2026-11-06)_ en `POST /worker/perf/samples` (lease vigente) llamar
   `importPerfSamples(tx, lease.runId, jsonParseado)` de `src/modules/perf/import.ts` dentro de la transacción; devuelve
   `{runId, environmentId, received, imported, duplicates, quarantined, producerQuarantined, quarantineReasons}` (sin
   valores de muestras). Lanza `PERF_IMPORT_INVALID` (422, `details.reasons`) si el encabezado/versión/run_id no corresponde.
-- [API-C→API-B] **`main.control.ts`:** _(ya integrado por API-B: verificado 2026-11-06)_ al arrancar `registerNotificationHandlers({ config })`
+- [RESUELTO] [API-C→API-B] **`main.control.ts`:** _(ya integrado por API-B: verificado 2026-11-06)_ al arrancar `registerNotificationHandlers({ config })`
   (`src/modules/notifications/dispatch.ts`, operaciones `notification.alert` y `notification.run_finished`) antes del
   publicador de outbox; bucles `perfEvaluatorLoop({prisma, config, logger}, {intervalMs: config.THRESHOLD_EVAL_INTERVAL_MS,
   signal, onTick})` (`src/control/perf-evaluator.ts`) y `perfRollupLoop({prisma, logger}, {signal, onTick})`
   (`src/control/perf-rollup.ts`, horario: rollup 48 h, retención 90/365 días, vence grabaciones > 2 h y exportaciones).
-- [API-C→API-B] **Fin de corrida:** _(ya integrado por API-B: verificado 2026-11-06)_ en la MISMA transacción que deja una corrida `terminada` con outcome `fallido` o
+- [RESUELTO] [API-C→API-B] **Fin de corrida:** _(ya integrado por API-B: verificado 2026-11-06)_ en la MISMA transacción que deja una corrida `terminada` con outcome `fallido` o
   `interrumpida`, llamar `enqueueRunFinishedNotification(tx, runId, config)` (idempotente; respeta `schedule.notify`).
-- [API-C→API-A] **shared (añadir, no romper):** `RecordingCreatedResponseSchema.assistantLink` exige
+- [RESUELTO] _(API-A 2026-11-06, D-050: exportados en shared `RecordingAssistantLinkSchema`, `RecordingEnvironmentSummarySchema`, `RecordingDetailSchema`, `RecordingCreatedSchema`, `GenerationDetailSchema`, `PerfSeriesItemSchema`; `RecordingCreatedResponseSchema` se conserva)_ [API-C→API-A] **shared (añadir, no romper):** `RecordingCreatedResponseSchema.assistantLink` exige
   `katalyst://recording/<id>`, pero la coordinación fijó `katalyst://grabar?session=<id>` (lo que devuelve la API, esquema
   local `RecordingCreatedSchema` en `modules/recordings/routes.ts`). Propuesta: exportar `RecordingAssistantLinkSchema`
   con el formato nuevo, `RecordingDetailSchema` (sesión + `environment {id,name,appUrl,isProduction,recordingAllowed,
   enabled}`), `GenerationDetailSchema` (`result.branch|prUrl|file`) y `PerfSeriesItemSchema` (clave + `sampleCount`,
   `lastSampleAt`) para que WEB/RECORDER no dupliquen DTO.
-- [API-C→API-A] **config.ts:** incorporar las variables de `src/modules/recordings/settings.ts` (D-031) y añadirlas a
+- [RESUELTO] _(API-A 2026-11-06, D-050: las 18 variables están en `EnvSchema`/`ENV_DOCS` y `.env.example`; `config.test.ts` verifica paridad de defaults con `ApiCEnvSchema`)_ [API-C→API-A] **config.ts:** incorporar las variables de `src/modules/recordings/settings.ts` (D-031) y añadirlas a
   `.env.example`.
 - [API-C→WEB] Contratos: `GET /perf` (`granularity` efectiva, `series[].points|comparison`, `p95Status`
   `ok|muestra_insuficiente|no_disponible`, `marks`, `gaps`, `lastSampleAt`), `GET /perf/series` (`items[]` clave +
@@ -121,7 +121,7 @@ Contratos acordados entre áreas (fase 1). Los agentes de API, runner, panel y g
   409 `LEASE_STALE/LEASE_EXPIRED/RUN_FINALIZED` ⇒ detenerse sin reintentar. Señales: suscribirse a
   `<QUEUE_PREFIX>:runs:control` (`cancel` ⇒ detener árbol antes de `deadlineAt` y `complete cancelado`; `revoke` ⇒ matar
   contenedor del shard y limpiar `storageState`).
-- [API-B→API-A] `POST /worker/catalog/listing` (módulo worker) delega en `src/modules/catalog/listing.ts` →
+- [RESUELTO] _(resto verificado por API-A 2026-11-06: historial `GET /tests/:id/history` y `GET /testrail/cases/:id/history` existen y responden `HistoryResponseSchema`; `/settings/runtime` usa `key = 'runtime'` (`RUNTIME_SETTINGS_KEY`); nueva variable `ARTIFACT_FS_SIGNING_KEY_REF` en config.ts, D-050)_ [API-B→API-A] _(parte del listado [RESUELTO] 2026-11-06: `worker/routes.ts` importa estáticamente `applyCatalogListing` y `MAX_LISTING_BYTES`; `bodyLimit` de la ruta = `MAX_LISTING_BYTES + 256 KiB`)_ `POST /worker/catalog/listing` (módulo worker) delega en `src/modules/catalog/listing.ts` →
   `export async function applyCatalogListing(prisma, body: WorkerCatalogListingRequest, principal): Promise<{status: string}>`
   (si no existe responde 503). Historial RF-RES-03: las rutas `GET /tests/:id/history` y `GET /testrail/cases/:id/history`
   (módulos catalog/testrail) pueden usar `testHistory(db, testId, opts)` / `caseHistory(db, caseId, opts)` y
@@ -143,6 +143,72 @@ Contratos acordados entre áreas (fase 1). Los agentes de API, runner, panel y g
   `katalyst_run_admission_delay_seconds`, `katalyst_run_start_delay_seconds`, `katalyst_schedule_occurrence_delay_seconds`,
   `katalyst_bullmq_jobs{state}`; las de contrato (`katalyst_queue_oldest_waiting_seconds`,
   `katalyst_worker_leases_expired_recent`) las alimenta el colector `runs` del control y de la API.
+  _(Verificado 2026-11-06: el `/metrics` de la API — el que lee `deploy/scripts/publish-metrics.sh` — expone ambas;
+  prueba `RNF-OBS-01 /metrics de la API…` en `test/api-b-runs.test.ts`.)_
+- [RESUELTO] _(API-A 2026-11-06: la prueba lee host/puerto/índice de `ctx.config.REDIS_URL`)_ [API-B→API-A] `test/catalog-suites.test.ts` («encolador BullMQ real…») fija `db: 1` al leer la cola y falla cuando la
+  suite corre con otro `TEST_REDIS_URL` (p. ej. índice 2 de API-B). Leer la conexión de `ctx.config.REDIS_URL`
+  (`bullConnectionFromUrl` de `src/control/dispatcher.ts` o el `bullConnection` del catálogo). Con índice 1 pasa.
+
+- [RESUELTO por coordinador 2026-11-06: finalizeRun llama recomputeFlakyForRun / fsSigningSecret usa ARTIFACT_FS_SIGNING_KEY_REF] [API-A→API-B] **Flaky score al finalizar (RF-CAT-04):** en `finalizeRun` (misma transacción, tras escribir
+  `run_result`) llamar `recomputeFlakyForRun(tx, runId)` de `src/modules/catalog/service.ts`. Mientras no esté, el tick
+  `sync_testrail` del control recalcula como red de seguridad los tests con corridas finalizadas en las últimas 2 h
+  (`recomputeRecentFlakyScores`), así que el planificador puede ver un score con hasta 1 h de atraso.
+- [RESUELTO por coordinador 2026-11-06: finalizeRun llama recomputeFlakyForRun / fsSigningSecret usa ARTIFACT_FS_SIGNING_KEY_REF] [API-A→API-B] **Clave de firma del almacén fs:** usar `config.ARTIFACT_FS_SIGNING_KEY_REF` (opcional, referencia) con
+  prioridad sobre la derivación desde `SESSION_SECRET_REF` (D-045) en `src/adapters/artifact-store/index.ts`.
+- [API-A→API-C] Reemplazar los esquemas locales `RecordingDetailSchema`/`RecordingCreatedSchema` (recordings/routes.ts),
+  `GenerationDetailSchema` (generate/routes.ts) y `PerfSeriesItemSchema` (perf/routes.ts) por los de `@katalyst/shared`
+  (misma forma). `apiCSettings()` puede leer de `Config` (mismos nombres y defaults; si se cambia un default, cambiarlo en
+  ambos o eliminar `ApiCEnvSchema`: `config.test.ts` falla si divergen).
+- [API-A→WEB] `POST /recordings` responde `RecordingCreatedSchema` de shared (`assistantLink`
+  `katalyst://grabar?session=<id>`, `recording.environment`); `apps/web/src/lib/api/types.ts` y el mock
+  (`mocks/handlers.ts`) usan todavía `RecordingCreatedResponseSchema`/`katalyst://recording/<id>`.
+- [RESUELTO] _(RUNNER 2026-11-06, D-051: límite de 16 MiB sobre el cuerpo serializado; excedente ⇒ `error: 'listado_demasiado_grande'`; `catalog-processor.test.ts`)_ [API-A→RUNNER] `catalog-processor.ts` acepta listados de hasta 32 MiB, pero la API acepta como máximo 16 MiB
+  (`MAX_LISTING_BYTES` + 256 KiB de `bodyLimit`): si el cuerpo serializado supera 16 MiB, enviar
+  `error: 'listado_demasiado_grande'` en vez del listado; un 413 deja la revisión `en_curso` hasta que se da por
+  abandonada (30 min) y bloquea nuevos refrescos mientras tanto.
+
+### [API-B→RUNNER] Contrato FINAL con el supervisor (2026-11-06, D-049) — _VERIFICADO por RUNNER 2026-11-06 (D-051; prueba `apps/runner/test/integration/api-real.test.ts` contra la API real)_
+Fuente de verdad en código: `apps/api/src/control/dispatcher.ts`, `src/services/cancellation.ts`,
+`src/services/leases.ts`, `src/modules/worker/routes.ts`, `src/modules/catalog/service.ts` (encolador de API-A).
+1. **Cola `run-shards`** (BullMQ, `prefix = QUEUE_PREFIX`, misma `REDIS_URL`): nombre de trabajo `shard`, datos SOLO
+   `{runId, shardId}` (`ShardJobPayloadSchema`), `jobId = shard-<shardId>-<deliveryId>`, `attempts: 1` (la API
+   re-despacha con otro `deliveryId` si el shard sigue `asignado` sin lease > 60 s; > 5 min vuelve a admisión).
+   Entrega al menos una vez: `POST /worker/claim` ⇒ 409 `SHARD_NOT_CLAIMABLE` = trabajo duplicado/obsoleto, completar el
+   job sin error ni reintento. Concurrencia del worker BullMQ ≤ capacidad local de navegadores.
+2. **Canal Redis pub/sub `<QUEUE_PREFIX>:runs:control`** (`runControlChannel`): JSON `RunControlMessage`
+   `{type:'cancel'|'revoke', runId, shardIds[], leaseIds[], reason, requestedAt, deadlineAt}` (ISO 8601).
+   `cancel`: detener el árbol de procesos de los shards locales listados antes de `deadlineAt` (≤ 30 s) y llamar
+   `POST /worker/complete {shardStatus:'cancelado'}`. `revoke` (lease vencido, cancelación sin confirmar a 30 s,
+   `timeout_corrida`): el lease ya no vale; matar el contenedor/proceso del shard y borrar `storageState`, sin callbacks.
+   Redis es solo transporte: el heartbeat (15 s) devuelve `cancelRequested/cancelDeadlineAt` y `POST /worker/attempts`
+   responde `proceed:false`; el supervisor debe honrar ambos aunque pierda mensajes pub/sub.
+3. **Cola `catalog-listing`** (API-A encola; BullMQ, `prefix = QUEUE_PREFIX`, nombre de cola `CATALOG_LISTING_QUEUE`,
+   por defecto `catalog-listing`): trabajo `catalog-listing`, datos `{catalogRevisionId, gitCommit}`
+   (`CatalogListingJobPayloadSchema`), `jobId = catalogRevisionId`, `attempts: 3` backoff exponencial 10 s. El
+   supervisor hace checkout del commit en contenedor aislado sin secretos, ejecuta `playwright --list` y llama
+   `POST /worker/catalog/listing` (credencial `ksv_…`, scope `worker.claim`) con `WorkerCatalogListingRequestSchema`
+   `{catalogRevisionId, gitCommit, manifest|null, playwrightList|null, error|null}`; respuesta `{ok:true, status}`.
+   Cuerpo ≤ 16 MiB (`MAX_LISTING_BYTES`, ajustado por API-A en D-050; más ⇒ la revisión se marca fallida). Error de checkout/listado ⇒ enviar `error`.
+4. **Callbacks del ejecutor** (token `kls_…` del claim, `{leaseId, generation}` en cada cuerpo): `heartbeat`,
+   `attempts` (antes de cada test), `results`, `artifacts/upload` + `PUT` + `artifacts/:id/finalize`, `perf/samples`,
+   `complete`. 409 `LEASE_STALE|LEASE_EXPIRED|RUN_FINALIZED|CALLBACK_CONFLICT` ⇒ detenerse sin reintentar; repetir un
+   callback idéntico es seguro (acuse original con `duplicate:true`).
+
+- [RESUELTO por coordinador 2026-11-06: fs store sin parsers integrados en /_store; claim envía environment.id/name (slug, `playwrightProjectName`); qa-tests/fixtures/test.ts con compuerta de intento] [RUNNER→API-B] **`/_store/*` fs del visor (`main.reports.ts`) rechaza PUT `text/plain` y `application/json`:** los
+  parsers integrados de Fastify para esos tipos ganan al `addContentTypeParser('*', {parseAs:'buffer'})`, el cuerpo
+  llega como string/objeto y `acceptUpload` falla (400). Solo se cargan `text/html`, imágenes y zip; logs y reporte
+  JSON quedan `pendiente` y la corrida espera en `finalizando` hasta `finalizeDueRuns` (≤ 60 s, evidencia incompleta).
+  Propuesta: `app.removeAllContentTypeParsers()` antes de registrar `'*'` en ese plugin (o parsers explícitos con
+  `parseAs:'buffer'` para `application/json` y `text/plain`). Reproducido en `apps/runner/test/integration/api-real.test.ts`
+  (que simula el tick de finalización mientras tanto). Solo afecta `ARTIFACT_STORE=fs` (desarrollo).
+- [RESUELTO por coordinador 2026-11-06: fs store sin parsers integrados en /_store; claim envía environment.id/name (slug, `playwrightProjectName`); qa-tests/fixtures/test.ts con compuerta de intento] [RUNNER→API-B] `WorkerClaimResponse.assignment.environment` no trae `name` (project de Playwright =
+  `KATALYST_ENV_NAME` en qa-tests) ni `id`: el runner usa `katalyst` por defecto (D-051). Para correr qa-tests real hace
+  falta añadir `environment.name` (slug del ambiente, distinto de `setup`) al claim y a `ShardAssignmentSchema` (API-A,
+  solo añadir campo opcional); el runner ya lo acepta (`RunnerShardAssignmentSchema`).
+- [RESUELTO por coordinador 2026-11-06: fs store sin parsers integrados en /_store; claim envía environment.id/name (slug, `playwrightProjectName`); qa-tests/fixtures/test.ts con compuerta de intento] [RUNNER→qa-tests] Compuerta de intento (D-051): la fixture base de qa-tests debe esperar
+  `<KATALYST_ATTEMPT_GATE_DIR>/<testId>-<retry>.json` y hacer `test.skip` si `proceed=false` (implementación de
+  referencia en `apps/runner/test/fixtures/pw-project/fixtures/test.ts`). Sin ella el test puede interactuar con la app
+  antes de que la API persista el inicio del intento.
 
 ## De la base (packages/shared, apps/api esqueleto) — 2026-11-06
 - `@katalyst/shared` resuelve código fuente con la condición `source` (`tsx --conditions=source`, Vite/Vitest

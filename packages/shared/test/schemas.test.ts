@@ -354,3 +354,30 @@ describe('RF-EJE-01 uniqueNonEmptyArray', () => {
     expect(codeOf(S.safeParse(['a', 'b', 'c']))).toContain('SELECTION_TOO_LARGE');
   });
 });
+
+describe('contratos de API-C añadidos a shared (pendientes de integración)', () => {
+  const id = '3f1c2b9e-8a7d-4c6b-9e5f-1a2b3c4d5e6f';
+  it('RF-GRB-01 enlace del asistente solo con ID de sesión (katalyst://grabar?session=<id>)', () => {
+    expect(shared.RecordingAssistantLinkSchema.safeParse(`katalyst://grabar?session=${id}`).success).toBe(true);
+    expect(shared.RecordingAssistantLinkSchema.safeParse(`katalyst://grabar?session=${id}&token=x`).success).toBe(false);
+    expect(shared.RecordingAssistantLinkSchema.safeParse(`katalyst://recording/${id}`).success).toBe(false);
+  });
+  it('RF-GRB-01 detalle de grabación exige ambiente con banderas de bloqueo', () => {
+    const now = new Date().toISOString();
+    const session = {
+      id, caseId: id, caseRef: 'C1', environmentId: id, createdBy: id, deviceId: null, status: 'creada', tags: [],
+      expiresAt: now, branch: null, prUrl: null, commit: null, rejectionReasons: [], steps: [], createdAt: now, updatedAt: now,
+    };
+    expect(shared.RecordingDetailSchema.safeParse(session).success).toBe(false);
+    const env = { id, name: 'staging', appUrl: 'https://staging.example.test', isProduction: false, recordingAllowed: true, enabled: true };
+    expect(shared.RecordingDetailSchema.safeParse({ ...session, environment: env }).success).toBe(true);
+    const created = { recording: { ...session, environment: env }, assistantLink: `katalyst://grabar?session=${id}`, assistant: { linked: false, online: false, installUrl: null } };
+    expect(shared.RecordingCreatedSchema.safeParse(created).success).toBe(true);
+  });
+  it('RF-GRB-03 detalle de generación con rama/PR/archivo; RF-REN-02 ítem de serie con conteo', () => {
+    expect(Object.keys(shared.GenerationDetailSchema.shape.result.unwrap().shape)).toEqual(
+      expect.arrayContaining(['branch', 'prUrl', 'file']),
+    );
+    expect(Object.keys(shared.PerfSeriesItemSchema.shape)).toEqual(expect.arrayContaining(['sampleCount', 'lastSampleAt']));
+  });
+});

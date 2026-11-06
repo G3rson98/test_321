@@ -376,6 +376,36 @@ describe('API de worker (RF-EJE-08, ESP §13.3)', () => {
     expect(d).toMatchObject({ status: 'terminada', outcome: 'pasado' });
   });
 
+  it('RNF-CON-01 caída tras el claim y antes de iniciar un test ⇒ shard reasignado sin intentos perdidos', async () => {
+    const { run, shard, w } = await startedRun({ caseIds: [seed.cases.D!.id] });
+    const t = w.assignment.tests[0]!;
+    await expireLeases(deps(), new Date(Date.now() + 80_000));
+    expect(await ctx.prisma.testAttempt.count({ where: { runResultId: t.runResultId } })).toBe(0);
+    expect((await ctx.prisma.runShard.findUniqueOrThrow({ where: { id: shard.id } })).status).toBe('pendiente');
+    expect((await w.start(t.runResultId)).statusCode).toBe(409); // lease obsoleto
+    await admitPendingShards(deps());
+    const w2 = new FakeWorker(ctx);
+    expect((await w2.claim(run.id, shard.id)).statusCode).toBe(200);
+    expect(w2.assignment.tests).toEqual([expect.objectContaining({ runResultId: t.runResultId, nextAttemptNo: 1 })]);
+    await w2.start(t.runResultId, 1, w2.assignment.tests[0]!.nextAttemptKind as never);
+    await w2.result(t.runResultId, 1, 'pasado');
+    await w2.complete();
+    expect((await get(`/runs/${run.id}`)).json()).toMatchObject({ status: 'terminada', outcome: 'pasado' });
+    expect(await ctx.prisma.testAttempt.count({ where: { runResultId: t.runResultId } })).toBe(1);
+  });
+
+  it('RNF-OBS-01 /metrics de la API expone cola pendiente, espera más antigua y leases vencidos (colector `runs`)', async () => {
+    await startedRun({ caseIds: [seed.cases.D!.id] });
+    await createRun({ caseIds: [seed.cases.A!.id], environmentId: envId }); // queda en cola (capacidad global 1)
+    await ctx.prisma.run.updateMany({ where: { status: 'en_cola' }, data: { queuedAt: new Date(Date.now() - 42_000) } });
+    const res = await ctx.app.inject({ method: 'GET', url: '/metrics' });
+    expect(res.statusCode).toBe(200);
+    const value = (name: string) => Number(new RegExp(`^${name}(?:\\{[^}]*\\})? (\\S+)$`, 'm').exec(res.body)?.[1]);
+    expect(value('katalyst_queue_pending')).toBeGreaterThanOrEqual(1);
+    expect(value('katalyst_queue_oldest_waiting_seconds')).toBeGreaterThanOrEqual(42);
+    expect(value('katalyst_worker_leases_expired_recent')).toBe(0);
+  });
+
   it('RF-EJE-03 cancelación con señal al supervisor y heartbeat; tests no iniciados ⇒ cancelado; idempotente', async () => {
     const sub = createRedis(ctx.config.REDIS_URL);
     await sub.connect();

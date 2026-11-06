@@ -36,6 +36,7 @@ import { completeShard, recordResult, startAttempt } from '../../services/result
 import { artifactStoreOf, leaseDepsOf, principalOf } from '../runs/deps.js';
 import { finalizeUpload, registerUpload } from '../artifacts/service.js';
 import { importPerfSamples } from '../perf/import.js';
+import { applyCatalogListing, MAX_LISTING_BYTES } from '../catalog/listing.js';
 
 const TAGS = ['worker'];
 
@@ -70,6 +71,8 @@ export const workerRoutes: FastifyPluginAsyncZod = async (app) => {
     '/worker/catalog/listing',
     {
       ...routeGuard('POST', '/worker/catalog/listing'),
+      // Manifiesto + listado de Playwright: el módulo de catálogo acota a MAX_LISTING_BYTES (excedente ⇒ revisión fallida).
+      bodyLimit: MAX_LISTING_BYTES + 256 * 1024,
       schema: {
         tags: TAGS,
         summary: 'Resultado del listado aislado del catálogo (supervisor)',
@@ -78,13 +81,8 @@ export const workerRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
-      // La lógica del catálogo (RF-CAT-01) pertenece al módulo catalog; se delega si está disponible.
-      const modulePath = '../catalog/listing.js';
-      const mod = (await import(modulePath).catch(() => null)) as {
-        applyCatalogListing?: (prisma: typeof app.deps.prisma, body: unknown, principal: unknown) => Promise<{ status: string }>;
-      } | null;
-      if (!mod?.applyCatalogListing) throw new KatalystError('SERVICE_UNAVAILABLE', 'El módulo de catálogo no está disponible.');
-      const r = await mod.applyCatalogListing(app.deps.prisma, request.body, principalOf(request));
+      // La lógica del catálogo (RF-CAT-01) pertenece al módulo catalog (API-A): validación e ingesta.
+      const r = await applyCatalogListing(app.deps.prisma, request.body, principalOf(request));
       return { ok: true as const, status: r.status };
     },
   );

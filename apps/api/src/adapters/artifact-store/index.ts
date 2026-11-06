@@ -19,6 +19,12 @@ export type ResolveSecret = (ref: string) => Promise<string>;
  * sin referencia, se deriva determinísticamente de la configuración local para que API y visor coincidan.
  */
 export async function fsSigningSecret(config: Config, resolveSecret?: ResolveSecret): Promise<string> {
+  // Clave dedicada (preferida): permite rotarla sin invalidar sesiones del panel.
+  if (config.ARTIFACT_FS_SIGNING_KEY_REF && resolveSecret) {
+    const k = await resolveSecret(config.ARTIFACT_FS_SIGNING_KEY_REF);
+    if (k.length < 32) throw new Error('ARTIFACT_FS_SIGNING_KEY_REF debe resolver a un secreto de al menos 32 caracteres');
+    return createHash('sha256').update(`katalyst-fs-store-key:${k}`).digest('hex');
+  }
   if (config.SESSION_SECRET_REF && resolveSecret) {
     const s = await resolveSecret(config.SESSION_SECRET_REF);
     return createHash('sha256').update(`katalyst-fs-store:${s}`).digest('hex');

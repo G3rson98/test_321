@@ -225,6 +225,8 @@ export async function claimShard(
           appUrl: snap.environment.appUrl,
           apiUrl: snap.environment.apiUrl,
           isProduction: snap.environment.isProduction,
+          id: snap.environment.id,
+          name: playwrightProjectName(snap.environment.name),
         },
         testUserRef: testUser
           ? { testUserId: testUser.id, username: testUser.username, secretRef: testUser.secretRef, readOnly: testUser.readOnly }
@@ -404,4 +406,16 @@ export async function expireLeases(deps: LeaseDeps, now: Date = new Date()): Pro
 /** Leases vencidos/revocados en una ventana (métrica `katalyst_worker_leases_expired_recent`). */
 export async function recentlyExpiredLeases(db: Db, now: Date, windowMs = 15 * 60_000): Promise<number> {
   return db.workerLease.count({ where: { revokedAt: { gte: new Date(now.getTime() - windowMs) } } });
+}
+
+/** Slug estable del nombre del ambiente usado como project de Playwright (contrato con runner y qa-tests). */
+export function playwrightProjectName(envName: string): string {
+  const slug = envName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[-_]+|-+$/g, '')
+    .slice(0, 63);
+  return !slug || slug === 'setup' ? 'ambiente' : slug;
 }

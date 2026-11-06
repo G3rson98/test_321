@@ -273,7 +273,7 @@ function AssistantMissing({ installUrl, recordingId }: { installUrl: string | nu
         <li>Ábrelo y elige “Vincular con Katalyst”: te mostrará un código de 8 caracteres.</li>
         <li>
           Confírmalo en{' '}
-          <Link to="/asistente/vincular" className="font-medium text-primary">
+          <Link to="/dispositivos/vincular" className="font-medium text-primary">
             Asistente › Vincular dispositivo
           </Link>
           .

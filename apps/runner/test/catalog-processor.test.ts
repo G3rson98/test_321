@@ -8,7 +8,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { flattenPlaywrightList } from '@katalyst/shared';
 import { describe, expect, it } from 'vitest';
-import { CatalogProcessor } from '../src/supervisor/catalog-processor.js';
+import { CatalogProcessor, MAX_LISTING_BYTES } from '../src/supervisor/catalog-processor.js';
 import { IsolatedDependencyInstaller } from '../src/supervisor/dependency-installer.js';
 import { CommitNotAvailableError, LocalDirCheckout, type GitCheckout } from '../src/supervisor/git-checkout.js';
 import { ProcessExecutorLauncher } from '../src/supervisor/launcher/process-launcher.js';
@@ -60,5 +60,15 @@ describe('CatalogProcessor (RF-CAT-01)', () => {
     const checkout: GitCheckout = { prepare: async () => { throw new CommitNotAvailableError(); } };
     await deps(checkout, posted, await fs.mkdtemp(path.join(os.tmpdir(), 'kcat-'))).process({ catalogRevisionId: randomUUID(), gitCommit: 'f'.repeat(40) });
     expect(posted[0]).toMatchObject({ manifest: null, playwrightList: null, error: expect.stringContaining('commit_no_disponible') });
+  });
+
+  it('cuerpo > 16 MiB (MAX_LISTING_BYTES de la API) ⇒ error listado_demasiado_grande sin manifiesto ni listado', async () => {
+    const posted: CatalogListingRequest[] = [];
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'kcat-big-'));
+    await fs.writeFile(path.join(dir, 'katalyst.manifest.json'), JSON.stringify({ schemaVersion: 1, tests: [], pad: 'x'.repeat(MAX_LISTING_BYTES + 1) }));
+    const checkout: GitCheckout = { prepare: async (commit) => ({ root: dir, testsSubdir: '', testsDir: dir, commit, commitVerified: false }) };
+    await deps(checkout, posted, await fs.mkdtemp(path.join(os.tmpdir(), 'kcat-'))).process({ catalogRevisionId: randomUUID(), gitCommit: 'a'.repeat(40) });
+    expect(posted).toEqual([expect.objectContaining({ manifest: null, playwrightList: null, error: 'listado_demasiado_grande' })]);
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });

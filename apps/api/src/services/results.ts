@@ -55,6 +55,7 @@ import { validateLease } from './leases.js';
 import { getConfig } from '../config.js';
 import { enqueueRunFinishedNotification } from '../modules/notifications/dispatch.js';
 import { enqueueTestRailPublication } from '../modules/testrail/publication.js';
+import { recomputeFlakyForRun } from '../modules/catalog/service.js';
 
 type Db = Prisma.TransactionClient;
 export type RunSummaryDto = RunSummary;
@@ -466,6 +467,9 @@ export async function finalizeRun(tx: Db, a: FinalizeArgs): Promise<boolean> {
   // --- Publicación TestRail (API-A): crear → resultados → adjuntos → cerrar, en ESTA transacción. Una corrida omitida
   // antes de iniciar no tiene casos publicables y no crea destino externo (`no_aplica`).
   await enqueueTestRailPublication(tx, a.runId);
+  // --- Flaky score persistido (RF-CAT-04, ESP §13.1): recalcular con el historial ya incluido en esta corrida.
+  // El bucle horario de control es solo red de seguridad (D-050).
+  await recomputeFlakyForRun(tx, a.runId);
   return true;
 }
 

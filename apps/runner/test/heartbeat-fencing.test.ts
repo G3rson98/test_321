@@ -161,6 +161,17 @@ describe('HttpWorkerApiClient contra servidor HTTP local', () => {
     expect(seen[0]).toMatchObject({ url: '/api/v1/worker/heartbeat', auth: `Bearer ${token}` });
   });
 
+  it('409 RUN_FINALIZED / LEASE_EXPIRED también detienen sin reintentar; CALLBACK_CONFLICT no es lease perdido (D-049 §4)', async () => {
+    for (const code of ['RUN_FINALIZED', 'LEASE_EXPIRED']) {
+      const { seen, baseUrl } = await serve(() => ({ status: 409, json: { error: { code, message: 'x', requestId: 'r' } } }));
+      const api = new HttpWorkerApiClient({ baseUrl, token: () => 'x'.repeat(40), backoffBaseMs: 1 });
+      const err = await api.complete({ leaseId: randomUUID(), generation: 1, shardStatus: 'completado', reason: null, runtimeVersions: {} }).catch((e: unknown) => e);
+      expect(isLeaseLost(err)).toBe(true);
+      expect(seen).toHaveLength(1);
+    }
+    expect(isLeaseLost(new WorkerApiError(409, 'CALLBACK_CONFLICT', 'x', false))).toBe(false);
+  });
+
   it('5xx se reintenta (idempotente) con Idempotency-Key estable', async () => {
     let n = 0;
     const { seen, baseUrl } = await serve(() =>

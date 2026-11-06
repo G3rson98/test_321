@@ -568,3 +568,70 @@ número libre.
   (se borra el objeto y se conserva la fila con `storage_key = NULL` y motivo); entregas terminales, auditoría y
   ocurrencias > 365 días; corridas terminales > 365 días sin muestras de rendimiento, alertas, objetos vigentes ni
   ocurrencia (sus hijos se borran en orden por FK `Restrict`). Nunca toca corridas activas.
+
+## D-049 — Cierre de API-B: métricas en la API, listado de catálogo y contrato final con el supervisor
+2026-11-06 · API-B (RNF-OBS-01/02, RF-CAT-01, RNF-CON-01, RNF-MAN-01)
+- El colector `runs` (`registerRunMetrics`, idempotente por nombre) se registra en la API (plugin `runs`) además del
+  control: el host solo lee el `/metrics` de la API (`deploy/scripts/publish-metrics.sh`), que así expone
+  `katalyst_queue_oldest_waiting_seconds`, `katalyst_queue_pending` y `katalyst_worker_leases_expired_recent` calculados
+  desde PostgreSQL en el scrape (no dependen de qué proceso admitió). `katalyst_bullmq_jobs{state}` sigue solo en control.
+- `POST /worker/catalog/listing` importa estáticamente `applyCatalogListing` de API-A (ya existe) en lugar del import
+  dinámico tolerante; `bodyLimit` de la ruta = `MAX_LISTING_BYTES + 256 KiB` para que el recorte a 8 MiB lo decida el
+  catálogo (revisión fallida) y no el límite global de Fastify.
+- Contrato con el supervisor congelado y documentado en `docs/pendientes-integracion.md` («Contrato FINAL con el
+  supervisor»): cola `run-shards` (job `shard`, `{runId, shardId}`, `attempts: 1`, re-despacho por la API), canal
+  `<QUEUE_PREFIX>:runs:control` (`cancel`/`revoke`), cola `catalog-listing` (API-A, `jobId = catalogRevisionId`).
+- Cobertura medida (RNF-MAN-01) solo con pruebas de integración contra PostgreSQL/Redis reales: `scheduler.ts`
+  96,0 %/79,7 %, `results.ts` 90,4 %/73,2 % (líneas/ramas).
+
+## D-050 — Cierre de API-A: listado del catálogo, flaky persistido, búsqueda medida y contratos añadidos
+2026-11-06 · API-A
+- **Listado aislado (RF-CAT-01, ESP §4):** `POST /tests/refresh` resuelve en servidor el SHA de la rama protegida
+  (`GitRepoReader`: `local`, GitHub, GitLab; sin refs del cliente, cuerpo estricto) y encola `catalog-listing`
+  `{catalogRevisionId, gitCommit}` (`jobId` = revisión) para el supervisor; la API nunca ejecuta ni importa código de
+  tests. `src/modules/catalog/listing.ts` → `applyCatalogListing(prisma, body, principal)`: solo principal `service`
+  (scope `worker.claim`), revalida con `WorkerCatalogListingRequestSchema`, `MAX_LISTING_BYTES` = 16 MiB (excedente ⇒
+  revisión `fallida` con `LISTADO_FALLIDO`; 5.000 tests ≈ 5–7 MiB de `playwright --list`). Ingesta con
+  `validateManifest` en modo catálogo: inválida ⇒ revisión `fallida` sin tocar el catálogo; válida ⇒ una transacción
+  con identidad por `stableKey`, vínculos N:M ajustados, salidos del manifiesto `retirado`; repetición = acuse idempotente;
+  commit distinto ⇒ 409; revisión `en_curso` > 30 min se da por abandonada al pedir otra.
+- **Flaky persistido (RF-CAT-04, §13.1):** `automated_test.flaky_*` se recalcula en la ingesta, con
+  `recomputeFlakyForRun(tx, runId)` (para la finalización de API-B) y como red de seguridad en el tick horario
+  `sync_testrail` (`recomputeRecentFlakyScores`, corridas finalizadas en 2 intervalos; un fallo solo se registra).
+- **Búsqueda medida (RF-CAT-02, §17.4):** `ILIKE '%q%'` sobre títulos con índices GIN `pg_trgm`
+  (migración `catalog_title_trgm`). Medición local (PostgreSQL 16, 50.000 títulos sintéticos, `LIMIT 26` ordenado):
+  sin índice seq scan 28–31 ms; con GIN 12,8 ms (término amplio, 10.000 coincidencias) y 0,12 ms (selectivo).
+  `C123`/`123` busca por ID externo.
+- **config.ts:** incorpora las 18 variables de API-C (D-031) con los mismos defaults (prueba de paridad con
+  `ApiCEnvSchema`) y `ARTIFACT_FS_SIGNING_KEY_REF` (pedido de API-B, D-045); todas en `.env.example`.
+- **shared (solo añadidos):** `RecordingAssistantLinkSchema` (`katalyst://grabar?session=<id>`),
+  `RecordingEnvironmentSummarySchema`, `RecordingDetailSchema`, `RecordingCreatedSchema`, `GenerationDetailSchema`,
+  `PerfSeriesItemSchema`. `RecordingCreatedResponseSchema` (forma antigua) se conserva por compatibilidad.
+- **Cobertura (RNF-MAN-01, `vitest --coverage`, integración real PostgreSQL/Redis):** servicios TestRail
+  `modules/testrail` 95,1 % líneas / 77,8 % ramas (`sync.ts` 100/82,7, `publication.ts` 86,1/77,3, `cases.ts`
+  100/87,5), `adapters/testrail` 96,2/88,8, `control/outbox-publisher.ts` 100/87,7, `control/testrail-sync.ts` 96/75;
+  `modules/catalog` 97,7/80,8. Suite completa de la API: 23 archivos, 232 pruebas en verde.
+
+## D-051 — Cierre de RUNNER: contrato final verificado, compuerta de intento, e2e e integración con la API real
+2026-11-06 · RUNNER
+- **Contrato D-049 verificado en `apps/runner`:** cola `run-shards` (job `shard`, payload validado con
+  `ShardJobPayloadSchema`), claim sin reintento HTTP; 409 (`SHARD_NOT_CLAIMABLE`), 404 y 422 (`PRODUCTION_BLOCKED`) ⇒
+  el trabajo se confirma sin ejecutar (`not_claimable`). Canal `<QUEUE_PREFIX>:runs:control`: `cancel` y `revoke` con
+  filtro por `shardIds`/`leaseIds`; se parsean además `reason` y `deadlineAt`.
+- **Correcciones de divergencias:** (1) `deadlineAt` del mensaje `cancel` y `cancelDeadlineAt` del heartbeat acotan la
+  gracia SIGTERM→SIGKILL a `deadlineAt − ahora − 4 s` (mín. 0,5 s, máx. `KATALYST_CANCEL_GRACE_MS`) para que el árbol
+  esté detenido y el `complete cancelado` enviado antes del límite; (2) 409 `RUN_FINALIZED` se trata como lease
+  perdido (detenerse sin reintentar), igual que `LEASE_STALE|LEASE_EXPIRED`; `CALLBACK_CONFLICT` sigue sin reintento
+  pero no detiene el shard; (3) `catalog-listing`: límite de 16 MiB sobre manifiesto + listado serializados
+  (`MAX_LISTING_BYTES` de la API, D-050); si se excede se envía `error: 'listado_demasiado_grande'` sin el listado.
+- **Compuerta de intento (ESP §13.3, "persistir inicio antes de interactuar"):** el reporter avisa del inicio por IPC,
+  el ejecutor llama `POST /worker/attempts` y escribe `<KATALYST_ATTEMPT_GATE_DIR>/<testId>-<retry>.json`
+  `{proceed}`; la fixture `test` del proyecto espera ese archivo (≤ 30 s) y hace `test.skip` si `proceed=false`.
+  Protocolo propuesto a qa-tests (implementado en `apps/runner/test/fixtures/pw-project/fixtures/test.ts`).
+- **Proyecto de Playwright:** la asignación aún no trae `environment.name`; sin él el ejecutor usa
+  `KATALYST_ENV_NAME=katalyst` y `--project=katalyst` (campo opcional hacia adelante en `RunnerShardAssignmentSchema`).
+- **Pruebas reales:** e2e `test/e2e/process-e2e.test.ts` (launcher `process`, Chromium real, página HTML local, API
+  falsa por HTTP) e integración `test/integration/api-real.test.ts` (apps/api en proceso con PostgreSQL
+  `katalyst_test_runner` y Redis índice 4: POST /runs → outbox → BullMQ → supervisor → ejecutor → `terminada/fallido`;
+  cancelación por pub/sub < 30 s ⇒ `cancelada`). Los módulos de la API se importan dinámicamente para no acoplar el
+  typecheck del runner al de la API; la prueba se omite con motivo si PostgreSQL/Redis no están disponibles.

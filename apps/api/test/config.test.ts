@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { controlLoops, touchHealthFile } from '../src/main.control.js';
 import { poolSizeFor, resolveFileBackedEnv } from '../src/config.js';
+import { ApiCEnvSchema } from '../src/modules/recordings/settings.js';
 
 const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
 
@@ -116,5 +117,17 @@ describe('procesos auxiliares', () => {
     expect(byName['planificador']).toBeLessThanOrEqual(15_000);
     expect(byName['watchdog_leases']).toBeLessThanOrEqual(15_000);
     expect(byName['evaluador_umbrales']).toBe(60_000);
+  });
+
+  it('RNF-SEG-01 variables de API-C (D-031) validadas en config.ts con los mismos defaults que settings.ts', () => {
+    const c = loadConfig(base);
+    const apiC = ApiCEnvSchema.parse({});
+    for (const k of Object.keys(ApiCEnvSchema.shape) as (keyof typeof apiC)[]) {
+      expect(c[k as keyof typeof c], k).toEqual(apiC[k]);
+    }
+    expect(() => loadConfig({ ...base, AI_EFFORT: 'max' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...base, RECORDING_TESTS_DIR: '../fuera' })).toThrow(ConfigError);
+    expect(loadConfig({ ...base, ARTIFACT_FS_SIGNING_KEY_REF: 'env:KATALYST_SECRET__X' }).ARTIFACT_FS_SIGNING_KEY_REF).toBe('env:KATALYST_SECRET__X');
+    expect(() => loadConfig({ ...base, ARTIFACT_FS_SIGNING_KEY_REF: 'valor-en-claro' })).toThrow(ConfigError);
   });
 });

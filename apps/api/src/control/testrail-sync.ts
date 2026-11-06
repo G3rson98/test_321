@@ -13,6 +13,7 @@ import type { SecretProvider } from '../lib/secrets.js';
 import { getConnection, syncNow } from '../modules/testrail/sync.js';
 import { registerTestRailMetrics } from '../modules/testrail/metrics.js';
 import { registerTestRailOutboxHandlers } from '../modules/testrail/publication.js';
+import { recomputeRecentFlakyScores } from '../modules/catalog/service.js';
 
 export interface TestRailControlDeps {
   prisma: PrismaClient;
@@ -24,6 +25,14 @@ export interface TestRailControlDeps {
 
 /** Un tick: sincroniza si hay conexión habilitada con proyecto. Devuelve el estado o `null` si no aplicó. */
 export async function runScheduledTestRailSync(deps: TestRailControlDeps): Promise<'exitosa' | 'fallida' | null> {
+  // Red de seguridad RF-CAT-04: flaky score de tests con corridas finalizadas en las últimas dos ventanas del bucle.
+  try {
+    const since = new Date(Date.now() - 2 * deps.config.TESTRAIL_SYNC_INTERVAL_MS);
+    const n = await recomputeRecentFlakyScores(deps.prisma, since);
+    if (n > 0) deps.logger.info({ tests: n }, 'flaky score recalculado');
+  } catch (e) {
+    deps.logger.warn({ err: e }, 'no se pudo recalcular flaky score');
+  }
   const conn = await getConnection(deps.prisma);
   if (!conn || !conn.enabled || !conn.projectExternalId) return null;
   try {

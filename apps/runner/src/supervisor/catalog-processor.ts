@@ -20,7 +20,14 @@ import type { ExecutorLauncher } from './launcher/types.js';
 /** Payload de la cola `catalog-listing` (`CatalogListingJobPayloadSchema` de @katalyst/shared, encolado por API-A). */
 export { CatalogListingJobPayloadSchema, type CatalogListingJobPayload };
 
-const MAX_LIST_BYTES = 32 * 1024 * 1024;
+/**
+ * Límite del cuerpo de `POST /worker/catalog/listing`: la API acepta `MAX_LISTING_BYTES` = 16 MiB de manifiesto +
+ * listado serializados (`apps/api/src/modules/catalog/listing.ts`, D-050; `bodyLimit` = 16 MiB + 256 KiB). Si se
+ * excede, se envía `error: 'listado_demasiado_grande'` en vez del listado (un 413 dejaría la revisión `en_curso`).
+ */
+export const MAX_LISTING_BYTES = 16 * 1024 * 1024;
+const MAX_LIST_BYTES = MAX_LISTING_BYTES;
+const TOO_LARGE = 'listado_demasiado_grande';
 
 export interface CatalogProcessorDeps {
   api: SupervisorApiClient;
@@ -38,7 +45,14 @@ export class CatalogProcessor {
   async process(raw: unknown): Promise<{ status: string }> {
     const job = CatalogListingJobPayloadSchema.parse(raw);
     const log = this.d.logger.child({ catalogRevisionId: job.catalogRevisionId, commit: job.gitCommit });
-    const result = await this.list(job, log);
+    let result = await this.list(job, log);
+    if (result.manifest !== null || result.playwrightList !== null) {
+      const size = Buffer.byteLength(JSON.stringify({ m: result.manifest, l: result.playwrightList }));
+      if (size > MAX_LISTING_BYTES) {
+        log.warn({ size }, 'listado excede el límite de la API: se envía error');
+        result = { manifest: null, playwrightList: null, error: TOO_LARGE };
+      }
+    }
     const res = await this.d.api.postCatalogListing({
       catalogRevisionId: job.catalogRevisionId,
       gitCommit: job.gitCommit,
@@ -99,7 +113,7 @@ export class CatalogProcessor {
       let text: string;
       try {
         const st = await fs.stat(file);
-        if (st.size > MAX_LIST_BYTES) return { manifest, playwrightList: null, error: 'listado_demasiado_grande' };
+        if (st.size > MAX_LIST_BYTES) return { manifest, playwrightList: null, error: TOO_LARGE };
         text = await fs.readFile(file, 'utf8');
       } catch {
         return { manifest, playwrightList: null, error: `listado_fallido: ${r.outputTail.slice(-2000) || `código ${r.exitCode}`}` };

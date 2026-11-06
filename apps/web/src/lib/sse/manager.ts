@@ -206,6 +206,11 @@ export class SseManager {
       if (!controller.signal.aborted) this.scheduleReconnect();
       return;
     }
+    // Detenido u oculto mientras se esperaba la respuesta: no abrir el canal (evita dos lectores por pestaña).
+    if (controller.signal.aborted || this.controller !== controller) {
+      void res.body?.cancel().catch(() => undefined);
+      return;
+    }
     if (res.status === 401) {
       this.controller = null;
       this.opts.onUnauthorized?.();

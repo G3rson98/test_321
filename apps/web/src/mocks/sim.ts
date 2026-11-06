@@ -2,6 +2,7 @@
  * Simulador del backend en modo mock: bus de eventos SSE (seq persistido en memoria, replay por Last-Event-ID) y
  * avance de corridas activas. Solo se activa en el navegador (startSimulation), no en pruebas.
  */
+import type { EventEntity, EventType } from '@katalyst/shared/enums';
 import type { MockRun } from './data/seed';
 import { NOW, recomputeRun, runs } from './data/seed';
 
@@ -19,7 +20,7 @@ export function currentSeq(): number {
   return seq;
 }
 
-export function emit(type: string, entity: string, entityId: string, version: number, runId: string | null, data: Record<string, unknown>): void {
+export function emit(type: EventType, entity: EventEntity, entityId: string, version: number, runId: string | null, data: Record<string, unknown>): void {
   seq += 1;
   const ev = {
     id: String(seq),
@@ -53,17 +54,21 @@ export function sseStream(lastEventId: string | null): ReadableStream<Uint8Array
           /* cerrado */
         }
       };
-      const last = lastEventId ? Number(lastEventId) : null;
+      // Mismo orden que la API: `retry`, `snapshot` (cubre huecos), luego replay desde Last-Event-ID o `reset`.
+      send('retry: 3000\n\n');
+      const last = lastEventId && /^\d+$/.test(lastEventId) ? Number(lastEventId) : null;
       const active = runs.filter((r) => isActive(r)).map((r) => r.id);
-      if (last !== null && log.length > 0 && last < (log[0]?.seq ?? 0) - 1) {
-        send(`event: reset\ndata: ${JSON.stringify({ reason: 'last_event_id_expirado', lastSeq: seq })}\n\n`);
-      } else if (last !== null) {
-        for (const e of log.filter((x) => x.seq > last)) send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
+      send(`event: snapshot\ndata: ${JSON.stringify({ lastSeq: seq, serverTime: new Date().toISOString(), activeRunIds: active })}\n\n`);
+      if (last !== null && last < seq) {
+        if (log.length > 0 && last < (log[0]?.seq ?? 0) - 1) {
+          send(`event: reset\ndata: ${JSON.stringify({ reason: 'last_event_id_expirado', lastSeq: seq })}\n\n`);
+        } else {
+          for (const e of log.filter((x) => x.seq > last)) send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
+        }
       }
-      send(`event: snapshot\ndata: ${JSON.stringify({ lastSeq: seq, activeRunIds: active, serverTime: new Date().toISOString() })}\n\n`);
       listener = (e) => send(`id: ${e.seq}\nevent: ${e.type}\ndata: ${e.payload}\n\n`);
       listeners.add(listener);
-      ping = setInterval(() => send(`event: ping\ndata: {}\n\n`), 25_000);
+      ping = setInterval(() => send(`event: ping\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`), 25_000);
     },
     cancel() {
       if (listener) listeners.delete(listener);

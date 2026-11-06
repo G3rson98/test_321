@@ -8,11 +8,17 @@ import type { ExecutorHandle } from './launcher/types.js';
 
 export type ShardPhase = 'preparando' | 'ejecutando' | 'finalizando';
 
+/** Margen reservado tras la gracia para SIGKILL + `complete cancelado` antes del `deadlineAt` de la API. */
+export const CANCEL_DEADLINE_MARGIN_MS = 4_000;
+const MIN_GRACE_MS = 500;
+
 export class ShardEntry {
   readonly controller = new AbortController();
   handle: ExecutorHandle | null = null;
   phase: ShardPhase = 'preparando';
   cancelRequestedAt: number | null = null;
+  /** Gracia efectiva de la cancelación (acotada por `deadlineAt` del mensaje de control o del heartbeat). */
+  cancelGraceMs: number;
   leaseLost = false;
   stopPromise: Promise<void> | null = null;
 
@@ -21,7 +27,9 @@ export class ShardEntry {
     readonly shardId: string,
     readonly leaseId: string,
     private readonly graceMs: number,
-  ) {}
+  ) {
+    this.cancelGraceMs = graceMs;
+  }
 
   get cancelled(): boolean {
     return this.cancelRequestedAt !== null;
@@ -34,14 +42,21 @@ export class ShardEntry {
   attach(handle: ExecutorHandle): void {
     this.handle = handle;
     this.phase = 'ejecutando';
-    if (this.cancelled) this.stopPromise = handle.stop('cancel', this.graceMs);
+    if (this.cancelled) this.stopPromise = handle.stop('cancel', this.cancelGraceMs);
   }
 
-  requestCancel(now: number): void {
+  /**
+   * Cancelación: SIGTERM → gracia → SIGKILL. Con `deadlineAtMs` (contrato D-049: detener antes de `deadlineAt`) la
+   * gracia se acorta para que el árbol esté detenido y el `complete cancelado` enviado antes del límite.
+   */
+  requestCancel(now: number, deadlineAtMs?: number | null): void {
     if (this.cancelRequestedAt !== null) return;
     this.cancelRequestedAt = now;
+    if (deadlineAtMs != null && Number.isFinite(deadlineAtMs)) {
+      this.cancelGraceMs = Math.max(MIN_GRACE_MS, Math.min(this.graceMs, deadlineAtMs - now - CANCEL_DEADLINE_MARGIN_MS));
+    }
     this.controller.abort();
-    if (this.handle) this.stopPromise = this.handle.stop('cancel', this.graceMs);
+    if (this.handle) this.stopPromise = this.handle.stop('cancel', this.cancelGraceMs);
   }
 
   markLeaseLost(): void {
@@ -110,10 +125,10 @@ export class CancelRegistry {
    * Cancela los shards locales de la corrida (todos, o los indicados). Devuelve cuántos se afectaron. Una
    * cancelación de corrida completa se recuerda para claims tardíos.
    */
-  cancelRun(runId: string, shardIds: readonly string[] = []): number {
+  cancelRun(runId: string, shardIds: readonly string[] = [], deadlineAtMs?: number | null): number {
     if (shardIds.length === 0) this.recent.set(runId, this.now());
     const list = this.matching(runId, shardIds);
-    for (const e of list) e.requestCancel(this.now());
+    for (const e of list) e.requestCancel(this.now(), deadlineAtMs);
     return list.length;
   }
 

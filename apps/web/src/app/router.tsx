@@ -231,7 +231,7 @@ const assistantRoute = createRoute({
 });
 const deviceLinkRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: '/asistente/vincular',
+  path: '/dispositivos/vincular',
   validateSearch: deviceLinkSearch,
   component: page(() => import('@/features/recording/device-link-page'), 'DeviceLinkPage'),
 });

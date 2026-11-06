@@ -185,9 +185,13 @@ for (const [i, name] of topNames.entries()) {
 }
 const topByName = (n: string) => sections.find((s) => s.name === n && s.depth === 0)!;
 
+/** Caso interno del mock: los campos extra (etiquetas, flaky…) NO salen en las respuestas (los quita `reply`). */
 export interface MockCase extends CaseDetail {
   tags: string[];
   testIds: string[];
+  sectionName: string | null;
+  classification: AutomatedTest['classification'] | null;
+  flaky: AutomatedTest['flaky'] | null;
 }
 export const cases: MockCase[] = [];
 export const tests: AutomatedTest[] = [];
@@ -346,7 +350,7 @@ export const MAIN_COMMIT_SHA = MAIN_COMMIT;
 // ---------------------------------------------------------------------------
 // Suites
 // ---------------------------------------------------------------------------
-function suite(name: string, description: string, tags: string[], lastOutcome: RunOutcome, scheduleLabels: string[]): Suite {
+function suite(name: string, description: string, tags: string[]): Suite {
   const resolvedCases = cases.filter((c) => c.tags.some((t) => tags.includes(t)) && c.trCaseId < 2000);
   return {
     id: uuid(),
@@ -359,14 +363,12 @@ function suite(name: string, description: string, tags: string[], lastOutcome: R
     deletedAt: null,
     version: 1,
     resolved: { cases: resolvedCases.length + (name === 'Humo diario' ? 1 : 0), tests: resolvedCases.filter((c) => c.automated).length },
-    lastOutcome,
-    scheduleLabels,
   };
 }
 export const suites: Suite[] = [
-  suite('Humo diario', 'Verificación rápida de pantallas principales', ['@humo'], 'pasado', ['L-V 08:00']),
-  suite('Regresión OC', 'Órdenes de carga en las tres pestañas', ['@oc'], 'fallido', ['Diario 22:00']),
-  suite('Rendimiento DXMon', 'Ciclos de medición de tiempos y tamaños', ['@rendimiento'], 'inestable', ['L-V 08-18 c/30 min']),
+  suite('Humo diario', 'Verificación rápida de pantallas principales', ['@humo']),
+  suite('Regresión OC', 'Órdenes de carga en las tres pestañas', ['@oc']),
+  suite('Rendimiento DXMon', 'Ciclos de medición de tiempos y tamaños', ['@rendimiento']),
 ];
 export const suiteById = (id: string) => suites.find((s) => s.id === id);
 
@@ -389,8 +391,11 @@ export function resolveSelector(sel: { caseIds?: string[]; tags?: string[]; sect
 // ---------------------------------------------------------------------------
 // Corridas, resultados, intentos, artefactos
 // ---------------------------------------------------------------------------
+/** Resultado interno: `lastError` alimenta el error del intento (la API lo expone en `TestAttempt.error`). */
+export type MockRunResult = RunResult & { caseRefs: string[]; lastError: string | null };
 export interface MockRun extends RunDetail {
-  results: RunResult[];
+  selectionLabel?: string | null;
+  results: MockRunResult[];
   attempts: TestAttempt[];
   caseResults: CaseResult[];
   artifacts: Artifact[];
@@ -432,7 +437,7 @@ export function makeRun(opts: {
   const id = uuid();
   const runTests = opts.caseList.flatMap((c) => c.testIds.map((tid) => ({ c, t: testById(tid)! })));
   const statuses = opts.plan ?? runTests.map(() => (rng() < 0.82 ? 'pasado' : rng() < 0.5 ? 'fallido' : 'inestable'));
-  const results: RunResult[] = runTests.map(({ c, t }, i) => {
+  const results: MockRunResult[] = runTests.map(({ c, t }, i) => {
     const status = statuses[i] ?? 'pasado';
     const blocked = opts.env.isProduction && t.classification !== 'lectura';
     const st: RunResultStatus = blocked ? 'bloqueado' : status;
@@ -676,7 +681,7 @@ for (const c of cases) {
 // ---------------------------------------------------------------------------
 // Programaciones
 // ---------------------------------------------------------------------------
-function schedule(name: string, sel: Schedule['selector'], env: Environment, editor: NonNullable<Schedule['editor']>, enabled: boolean, targetLabel: string): Schedule {
+function schedule(name: string, sel: Schedule['selector'], env: Environment, editor: NonNullable<Schedule['editor']>, enabled: boolean, _targetLabel: string): Schedule {
   const built = buildCronExpressions(editor);
   return {
     id: uuid(),
@@ -702,8 +707,6 @@ function schedule(name: string, sel: Schedule['selector'], env: Environment, edi
     nextOccurrence: null,
     lastOccurrence: null,
     version: 1,
-    environmentName: env.name,
-    targetLabel,
   };
 }
 export const schedules: Schedule[] = [
@@ -884,7 +887,6 @@ export const channels: NotificationChannel[] = [
   { kind: 'correo', enabled: false, secretRef: null, recipients: ['qa@deltax.la'], smtp: { host: 'smtp.deltax.la', port: 587, from: 'katalyst@deltax.la', secure: true }, lastTestAt: null, lastTestOk: null, updatedAt: iso(NOW - 30 * DAY), version: 1 },
   { kind: 'teams', enabled: false, secretRef: null, recipients: [], smtp: null, lastTestAt: null, lastTestOk: null, updatedAt: iso(NOW - 30 * DAY), version: 1 },
 ];
-export const notifySettings = { corrida_con_fallas: true, corrida_interrumpida: true, umbral_superado: true };
 
 export const preferences = new Map<string, NotificationPreferences>();
 

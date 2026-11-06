@@ -208,3 +208,10 @@ export const EventMarkListQuerySchema = CursorQuerySchema.extend({
   from: IsoDateTimeSchema.optional(),
   to: IsoDateTimeSchema.optional(),
 });
+
+/** `GET /perf/series` → `items[]`: clave de serie + conteo y último dato (API-C, D-025). */
+export const PerfSeriesItemSchema = PerfSeriesKeySchema.extend({
+  sampleCount: z.number().int().nonnegative(),
+  lastSampleAt: IsoDateTimeSchema,
+});
+export type PerfSeriesItem = z.infer<typeof PerfSeriesItemSchema>;

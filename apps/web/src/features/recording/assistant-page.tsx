@@ -60,7 +60,7 @@ export function AssistantPage() {
                   </Button>
                 ) : null}
                 <Button asChild>
-                  <Link to="/asistente/vincular">
+                  <Link to="/dispositivos/vincular">
                     <Link2 /> Vincular dispositivo
                   </Link>
                 </Button>

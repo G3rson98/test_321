@@ -275,6 +275,28 @@ export async function recomputeFlakyScores(db: Db, testIds: string[]): Promise<v
   }
 }
 
+/** Recalcula el flaky score de los tests de una corrida (API-B lo invoca al finalizarla, dentro de su transacción). */
+export async function recomputeFlakyForRun(db: Db, runId: string): Promise<number> {
+  const rows = await db.runResult.findMany({ where: { runId }, select: { automatedTestId: true }, distinct: ['automatedTestId'] });
+  await recomputeFlakyScores(db, rows.map((r) => r.automatedTestId));
+  return rows.length;
+}
+
+/**
+ * Red de seguridad horaria (proceso de control): recalcula tests con resultados en corridas finalizadas desde `since`.
+ * Garantiza consistencia eventual del score persistido aunque la finalización no lo haya recalculado.
+ */
+export async function recomputeRecentFlakyScores(db: Db, since: Date): Promise<number> {
+  const rows = await db.runResult.findMany({
+    where: { run: { finishedAt: { gte: since } } },
+    select: { automatedTestId: true },
+    distinct: ['automatedTestId'],
+    take: 5000,
+  });
+  await recomputeFlakyScores(db, rows.map((r) => r.automatedTestId));
+  return rows.length;
+}
+
 export function isFlakyRow(t: Pick<AutomatedTest, 'flakyScore' | 'flakyDenominator'>): boolean {
   return t.flakyDenominator >= FLAKY_MIN_OBSERVATIONS && t.flakyScore !== null && t.flakyScore >= FLAKY_THRESHOLD;
 }
