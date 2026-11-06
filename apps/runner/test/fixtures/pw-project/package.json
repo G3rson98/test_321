@@ -1,0 +1,6 @@
+{
+  "name": "katalyst-runner-pw-fixture",
+  "private": true,
+  "type": "module",
+  "description": "Proyecto Playwright mínimo de fixtures para la prueba e2e local del runner (sin internet)."
+}

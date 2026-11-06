@@ -1,0 +1,12 @@
+# Katalyst — 07:30 UTC = 03:30 America/La_Paz (fuera de horario laboral). Persistent: si el host estuvo
+# apagado a esa hora, se ejecuta al arrancar (RPO <= 24 h; alarma si el último éxito supera 26 h).
+[Unit]
+Description=Katalyst: backup diario de PostgreSQL
+
+[Timer]
+OnCalendar=*-*-* 07:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

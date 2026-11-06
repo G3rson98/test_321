@@ -1,0 +1,6 @@
+# Katalyst — configuración parcial del backend S3 (copiar a backend.hcl; no contiene secretos).
+# Uso: terraform init -backend-config=backend.hcl
+# Valores: salida `backend_config_internal` del root bootstrap.
+
+bucket = "katalyst-tfstate-000000000000-PENDIENTE-region"
+region = "PENDIENTE-region"

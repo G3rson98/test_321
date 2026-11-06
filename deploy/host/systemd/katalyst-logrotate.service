@@ -1,0 +1,10 @@
+# Katalyst — rotación de logs locales y limpieza de imágenes (ESP §18).
+[Unit]
+Description=Katalyst: rotación de logs y limpieza de imágenes sin uso
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=/opt/katalyst/current/deploy/scripts/rotate-logs.sh
+StandardOutput=append:/var/log/katalyst/rotate-logs.log
+StandardError=append:/var/log/katalyst/rotate-logs.log

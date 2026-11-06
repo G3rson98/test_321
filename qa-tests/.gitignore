@@ -1,0 +1,26 @@
+# Dependencias
+node_modules/
+
+# Estado autenticado y credenciales: NUNCA en el repositorio (RNF-SEG-01, ESP §13.7)
+.auth/
+storageState*
+*storage-state*
+*.storageState.json
+test-user*.json
+.env
+.env.*
+!.env.example
+
+# Resultados y evidencia (los sube el runner tras sanitizar; no se versionan)
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+dxmon-output/
+
+# Lockfiles ajenos al workspace pnpm (el workspace usa pnpm-lock.yaml)
+package-lock.json
+yarn.lock
+
+# Sistema
+.DS_Store

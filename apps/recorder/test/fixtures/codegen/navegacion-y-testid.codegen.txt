@@ -1,0 +1,8 @@
+import { test, expect } from '@playwright/test';
+
+test('test', async ({ page }) => {
+  await page.goto('http://127.0.0.1:58057/');
+  await page.getByTestId('tab-abastecimiento').click();
+  await page.getByRole('link', { name: 'Ver detalle' }).click();
+  await page.getByRole('link', { name: 'Volver' }).click();
+});

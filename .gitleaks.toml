@@ -1,0 +1,75 @@
+# Katalyst — configuración de gitleaks (ESP §11 bloque 1: "Ningún secreto aparece en el repositorio, los logs ni los
+# reportes (revisión con gitleaks o similar)"; RNF-SEG-01). Complementa, no reemplaza, el ensayo de canarios de
+# ESP §13.7 sobre artefactos (JSON/HTML/ZIP/DOM/URLs).
+#
+# Uso: `pnpm secrets:scan`  (equivale a `gitleaks detect --no-git --source . --config .gitleaks.toml --redact`)
+#      En CI con historial: `gitleaks detect --source . --config .gitleaks.toml --redact`.
+
+title = "Katalyst gitleaks"
+
+[extend]
+# Reglas por defecto de gitleaks (AWS, GitHub, GitLab, Slack, JWT, claves privadas, etc.).
+useDefault = true
+
+# --- Reglas propias ---------------------------------------------------------
+
+[[rules]]
+id = "katalyst-canary"
+description = "Token canario de Katalyst (no debe aparecer en código productivo, reportes ni artefactos)"
+regex = '''KATALYST_CANARY_[A-Za-z0-9_-]+'''
+keywords = ["katalyst_canary_"]
+
+[[rules]]
+id = "katalyst-secret-value-env"
+description = "Valor literal asignado a una variable KATALYST_SECRET__* (los secretos se leen por referencia)"
+regex = '''KATALYST_SECRET__[A-Z0-9_]+\s*=\s*['"]?[^\s'"<#][^\s'"#]{5,}'''
+keywords = ["katalyst_secret__"]
+
+[[rules]]
+id = "testrail-api-key-assignment"
+description = "API key de TestRail asignada literalmente"
+regex = '''(?i)testrail[_-]?(?:api[_-]?)?key\s*[:=]\s*['"]?[A-Za-z0-9/+._-]{16,}'''
+keywords = ["testrail"]
+
+[[rules]]
+id = "playwright-storage-state-cookies"
+description = "storageState de Playwright con cookies/tokens (secreto, ESP §13.7)"
+regex = '''"cookies"\s*:\s*\[\s*\{\s*"name"\s*:'''
+keywords = ["cookies"]
+
+[[rules]]
+id = "cognito-id-token"
+description = "idToken/accessToken de Cognito (JWT) asignado literalmente"
+regex = '''(?i)(?:id|access|refresh)_?token['"]?\s*[:=]\s*['"]eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+'''
+keywords = ["eyj"]
+
+[[rules]]
+id = "password-assignment"
+description = "Contraseña literal en código/config"
+regex = '''(?i)(?:password|passwd|contrase[nñ]a)['"]?\s*[:=]\s*['"][^'"\s<>{}$]{6,}['"]'''
+keywords = ["password", "passwd", "contrase"]
+
+# --- Excepciones -------------------------------------------------------------
+
+[allowlist]
+description = "Fixtures sintéticos y archivos sin secretos"
+paths = [
+  # Lockfile y artefactos generados
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)coverage/''',
+  # Fixtures SINTÉTICOS de pruebas de sanitización/lint: siembran tokens/canarios a propósito (ESP §13.7).
+  '''^packages/shared/test/''',
+  '''^apps/[^/]+/test/fixtures/canary/''',
+  # Especificación (texto de requisitos)
+  '''^Especificación_Requerimientos/''',
+]
+regexes = [
+  # Marcadores de enmascaramiento y placeholders de ejemplo
+  '''\[REDACTED(?::[a-z_]+)?\]''',
+  '''<definir-localmente>''',
+  # Credenciales de desarrollo local documentadas (PostgreSQL en loopback, sin valor fuera del equipo)
+  '''postgresql://katalyst:katalyst_dev@localhost''',
+]
+stopwords = ["example", "ejemplo", "dummy", "placeholder"]

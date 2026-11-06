@@ -1,0 +1,52 @@
+# Katalyst — ejemplo de variables del ambiente `internal`. Copiar a terraform.tfvars (NO versionar).
+# Sin secretos: solo identificadores. Los valores PENDIENTE dependen de decisiones de ESP §12 y deben
+# resolverse (y registrarse en docs/costos.md / docs/decisiones.md) antes del primer apply.
+
+# --- Obligatorias -------------------------------------------------------------
+aws_region     = "PENDIENTE-region"            # p. ej. us-east-1
+aws_account_id = "000000000000"
+owner          = "PENDIENTE-equipo-qa"
+cost_center    = "PENDIENTE-centro-de-costo"
+
+allowed_cidrs = [
+  "203.0.113.0/24", # PENDIENTE: CIDR corporativo real (ejemplo de documentación RFC 5737)
+]
+
+panel_hostname   = "katalyst.interno.example.com"          # PENDIENTE
+reports_hostname = "katalyst-reportes.interno.example.com" # PENDIENTE (origen separado)
+
+alarm_contact_emails  = ["qa-oncall@example.com"] # PENDIENTE
+budget_contact_emails = ["qa-lead@example.com"]   # PENDIENTE
+monthly_budget_usd    = 1                         # PENDIENTE: techo acordado (docs/costos.md)
+
+# --- Opcionales (valores por defecto mostrados o comentados) --------------------
+# existing_vpc_id    = "vpc-0123456789abcdef0"
+# existing_subnet_id = "subnet-0123456789abcdef0"   # subnet PÚBLICA con ruta a IGW
+# vpc_cidr           = "10.80.0.0/24"
+# public_subnet_cidr = "10.80.0.0/26"
+# availability_zone  = "us-east-1a"
+# egress_tcp_ports   = [80, 443]                    # + 587 si el canal es SMTP
+
+# instance_type        = "t3.large"                 # o "m7i.large" tras benchmark
+# cpu_credits          = "standard"                 # o "unlimited" (cargo por créditos excedentes)
+# ami_id               = "ami-0123456789abcdef0"    # fijar AMI; null = AL2023 vía SSM
+# root_volume_size_gib = 30
+# data_volume_size_gib = 100
+
+# route53_zone_id    = "Z0123456789ABCDEFGHIJ"      # zona EXISTENTE; habilita DNS-01 acotado y registros A
+# manage_dns_records = true
+
+# ssm_parameter_prefix = "/katalyst/internal"
+# ssm_kms_key_arn      = null
+# s3_kms_key_arn       = null
+# ebs_kms_key_arn      = null
+# logs_kms_key_arn     = null
+
+# evidence_retention_days          = 30
+# backup_retention_days            = 7
+# backup_noncurrent_retention_days = 7
+# log_retention_days               = 14
+
+# budget_filter_by_project_tag = true
+# enable_ec2_auto_recovery     = true
+# extra_tags = { Application = "deltax-qa-runner" }

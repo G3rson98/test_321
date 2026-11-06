@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "tests": [
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000001",
+      "file": "tests/basic.spec.ts",
+      "title": "C1 Panel visible @humo",
+      "cases": [
+        "C1"
+      ],
+      "tags": [
+        "@humo"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    },
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000002",
+      "file": "tests/basic.spec.ts",
+      "title": "C2 Título incorrecto @humo",
+      "cases": [
+        "C2"
+      ],
+      "tags": [
+        "@humo"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    },
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000003",
+      "file": "tests/basic.spec.ts",
+      "title": "C3 Inestable @humo",
+      "cases": [
+        "C3"
+      ],
+      "tags": [
+        "@humo"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    },
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000004",
+      "file": "tests/basic.spec.ts",
+      "title": "C4 Operación que no termina @humo",
+      "cases": [
+        "C4"
+      ],
+      "tags": [
+        "@humo"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    },
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000005",
+      "file": "tests/basic.spec.ts",
+      "title": "C5 Omitido autorizado @rendimiento",
+      "cases": [
+        "C5"
+      ],
+      "tags": [
+        "@rendimiento"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    },
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000006",
+      "file": "tests/basic.spec.ts",
+      "title": "C6 Lento @lento",
+      "cases": [
+        "C6"
+      ],
+      "tags": [
+        "@lento"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    },
+    {
+      "stableKey": "0f6c2a51-6f0e-4d0a-9c11-000000000007",
+      "file": "tests/basic.spec.ts",
+      "title": "C7 Variante ausente @humo",
+      "cases": [
+        "C7"
+      ],
+      "tags": [
+        "@humo"
+      ],
+      "classification": "lectura",
+      "parameterKeys": [
+        "default"
+      ],
+      "writeIdempotencyApproved": false,
+      "owner": "qa"
+    }
+  ]
+}

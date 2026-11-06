@@ -1,0 +1,12 @@
+import { test, expect } from '@playwright/test';
+
+test('test', async ({ page }) => {
+  await page.goto('http://127.0.0.1:58057/');
+  await page.getByRole('tab', { name: 'Distribuidores' }).click();
+  await page.getByRole('textbox', { name: 'Buscar orden' }).click();
+  await page.getByRole('textbox', { name: 'Buscar orden' }).fill('OC-123');
+  await page.getByRole('textbox', { name: 'Buscar orden' }).press('Enter');
+  await page.getByRole('checkbox', { name: 'Solo pendientes' }).check();
+  await page.getByLabel('Estado').selectOption('confirmado');
+  await page.getByRole('button', { name: 'Filtrar' }).click();
+});

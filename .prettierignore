@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+**/prisma/migrations/**
+Especificación_Requerimientos
+*.md

@@ -1,0 +1,169 @@
+# Katalyst — Caddy (proxy HTTPS, SPA del panel, origen separado de reportes, gateway de worker).
+# Requisitos: RNF-SEG-03 (HTTPS), RNF-SEG-05, RNF-OPT-04 (SSE), ESP §13.7 (reportes en origen separado,
+# CSP restrictiva, sin cookies del panel), ESP §18, ARQ §2/§4.
+#
+# TLS: DNS-01 con el plugin github.com/caddy-dns/route53 (compilado con xcaddy en deploy/docker/web.Dockerfile).
+# Credenciales: rol del host vía broker de credenciales (/run/katalyst/aws/config, credential_process);
+# permiso IAM acotado a TXT _acme-challenge de los dos hostnames (infra/terraform/internal/iam.tf).
+# Si la zona DNS no está en Route 53, reemplazar el plugin (p. ej. caddy-dns/cloudflare) y leer su token
+# desde un archivo de secreto; registrar el cambio en docs/decisiones.md.
+# No se abre el puerto 80: sin redirección HTTP→HTTPS (auto_https disable_redirects) ni desafío HTTP-01.
+#
+# Variables (entorno del contenedor, NO secretas): KATALYST_PANEL_HOST, KATALYST_REPORTS_HOST,
+# KATALYST_EVIDENCE_ORIGIN, KATALYST_ROUTE53_ZONE_ID, AWS_REGION, ACME_EMAIL.
+{
+	email {$ACME_EMAIL}
+	admin localhost:2019
+	auto_https disable_redirects
+	acme_dns route53 {
+		region {$AWS_REGION}
+		hosted_zone_id {$KATALYST_ROUTE53_ZONE_ID}
+	}
+	servers {
+		protocols h1 h2
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Cabeceras comunes. Se elimina Server/X-Powered-By.
+(common_security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		-Server
+		-X-Powered-By
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# Panel (SPA) + API en el mismo origen
+# ---------------------------------------------------------------------------------------------
+{$KATALYST_PANEL_HOST} {
+	import common_security_headers
+	header {
+		X-Frame-Options "DENY"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$KATALYST_EVIDENCE_ORIGIN}; media-src 'self' blob: {$KATALYST_EVIDENCE_ORIGIN}; font-src 'self' data:; connect-src 'self' {$KATALYST_EVIDENCE_ORIGIN}; frame-src https://{$KATALYST_REPORTS_HOST}; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+	}
+
+	log
+
+	# Endpoints internos nunca expuestos en el origen público:
+	#  - /metrics: lo lee el publicador de métricas del host dentro del contenedor.
+	#  - /readyz: diagnóstico interno (healthcheck y smoke test en el host).
+	#  - /api/v1/worker/*: solo vía gateway de runner-net (ejecutores) o red interna (supervisor).
+	# Todos los `handle` usan matchers con nombre (se evalúan en el orden escrito) y además los matchers
+	# de API excluyen explícitamente las rutas internas, para no depender del orden.
+	@internal path /metrics /metrics/* /readyz /api/v1/worker /api/v1/worker/*
+	handle @internal {
+		respond 404
+	}
+
+	# SSE autenticado: sin buffering ni compresión, sin timeout de lectura.
+	@sse {
+		path /api/*
+		not path /api/v1/worker /api/v1/worker/*
+		header Accept *text/event-stream*
+	}
+	handle @sse {
+		reverse_proxy api:3000 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	@api {
+		path /api/*
+		not path /api/v1/worker /api/v1/worker/*
+	}
+	handle @api {
+		request_body {
+			max_size 25MB
+		}
+		reverse_proxy api:3000 {
+			header_up X-Request-Id {http.request.uuid}
+		}
+	}
+
+	# Liveness sin secretos para el smoke test externo.
+	@healthz path /healthz
+	handle @healthz {
+		reverse_proxy api:3000
+	}
+
+	# SPA estática (build de apps/web copiado en la imagen). Assets con hash: caché inmutable.
+	handle {
+		root * /srv/panel
+		encode zstd gzip
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@notassets not path /assets/*
+		header @notassets Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# Visor de reportes: hostname SEPARADO, CSP estricta, sin cookies del panel.
+# Las cookies del panel son host-only (__Host-, sin atributo Domain): el navegador nunca las envía aquí.
+# El servicio `reports` autoriza con su propio ticket de un solo uso (<= 5 min) emitido por la API.
+# 'unsafe-inline' en script-src es necesario para el reporte HTML autocontenido de Playwright; se acepta
+# porque este origen no tiene credenciales del panel y connect-src se limita a 'self'.
+# ---------------------------------------------------------------------------------------------
+{$KATALYST_REPORTS_HOST} {
+	import common_security_headers
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; frame-ancestors https://{$KATALYST_PANEL_HOST}; base-uri 'none'; form-action 'none'; object-src 'none'"
+		Cache-Control "private, no-store"
+		X-Robots-Tag "noindex, nofollow"
+	}
+
+	log
+
+	@write not method GET HEAD
+	handle @write {
+		respond 405
+	}
+
+	@internal path /metrics /metrics/* /readyz
+	handle @internal {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy reports:3001
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# Gateway de worker (solo red runner-net, sin TLS dentro del bridge del host): los ejecutores de shard
+# solo pueden llegar a /api/v1/worker/* con su leaseToken. El firewall de runner-net bloquea cualquier
+# otro destino privado (incluido caddy:443 en esta red).
+# ---------------------------------------------------------------------------------------------
+http://:8081 {
+	@worker path /api/v1/worker/*
+	handle @worker {
+		request_body {
+			max_size 5MB
+		}
+		reverse_proxy api:3000
+	}
+	handle {
+		respond 404
+	}
+}
+
+# Healthcheck local del contenedor.
+http://127.0.0.1:8099 {
+	bind 127.0.0.1
+	respond /healthz 200
+}

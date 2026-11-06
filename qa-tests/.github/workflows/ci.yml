@@ -1,0 +1,79 @@
+# CI de ejemplo para el repositorio qa-tests en GitHub (plataforma Git pendiente, ESP §12).
+# Estos checks deben configurarse como OBLIGATORIOS en la protección de la rama principal (ESP §13.1):
+#   - "qa-tests / validar"              (typecheck + validate-manifest + playwright --list)
+#   - "qa-tests / bloqueos-aprobacion"  (validate-manifest --strict: TODO selector, IDs placeholder, skips, sin_clasificar)
+#   - "qa-tests / gitleaks"             (secretos en todo el historial)
+# CI solo valida; no ejecuta tests contra FMS DeltaX ni recibe credenciales (ESP §4: ejecución en workers propios).
+# Fijar las acciones por SHA de commit al adoptar el workflow (las etiquetas se muestran por legibilidad).
+name: qa-tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: "10.34.9"
+  NODE_VERSION: "24"
+  # Evita descargar navegadores: --list y typecheck no los necesitan.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  validar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Validar manifiesto (estructura, correspondencia, reglas ESP §10)
+        run: pnpm run validate:manifest
+      - name: Listar tests (Playwright)
+        run: pnpm exec playwright test --list
+
+  bloqueos-aprobacion:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Falla mientras existan bloqueos de Bloque 0 (IDs placeholder, TODO selector): es intencional.
+      - name: Validar manifiesto en modo estricto (aprobación por PR)
+        run: pnpm run validate:manifest:strict
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks (historial completo, valores redactados)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git --redact --verbose /repo

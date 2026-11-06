@@ -1,0 +1,21 @@
+# Katalyst — backend del propio bootstrap (paso 2, ver ../README.md §2).
+# Requisitos: RNF-INF-01, ARQ §5 ("migrar su state inicial a clave administrativa separada").
+#
+# 1. El primer `terraform apply` del bootstrap usa state LOCAL (el bucket aún no existe).
+# 2. Copiar este archivo a `backend.tf`, reemplazar <STATE_BUCKET> y <REGION> y ejecutar:
+#      terraform init -migrate-state
+# 3. Verificar con `terraform state list` y `aws s3api head-object` que el objeto existe;
+#    luego borrar terraform.tfstate y terraform.tfstate.backup locales (contienen ARNs/metadata).
+#
+# La clave `katalyst/bootstrap/` es administrativa y distinta de `katalyst/internal/`:
+# restringirla por IAM solo a administradores (CI de la aplicación no la necesita).
+
+terraform {
+  backend "s3" {
+    bucket       = "<STATE_BUCKET>"
+    key          = "katalyst/bootstrap/terraform.tfstate"
+    region       = "<REGION>"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

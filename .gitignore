@@ -1,0 +1,55 @@
+# Dependencias y builds
+node_modules/
+dist/
+build/
+out/
+*.tsbuildinfo
+.vite/
+.turbo/
+
+# Pruebas y cobertura
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Secretos y estado autenticado (RNF-SEG-01, ESP §13.7)
+.env
+.env.*
+!.env.example
+storageState*
+*.storageState.json
+.auth/
+*.pem
+*.key
+*.p12
+secrets/
+
+# Terraform (state/plan/crash logs son sensibles; ARQ §5)
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+crash.log
+crash.*.log
+.terraform/
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Artefactos locales
+artifacts-local/
+.data/
+*.log
+logs/
+
+# Editor / SO
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

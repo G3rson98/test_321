@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "description": "Endpoints GET que DXMon puede repetir (source probe). ESP §13.7: GET no garantiza ausencia de efectos; cada entrada requiere revisión explícita antes de habilitarse. Solo las entradas con approved=true se entregan a DXMon y se aceptan en samples. Rutas a confirmar con tráfico real de staging en Bloque 0.",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "endpoints": [
+    {
+      "key": "users_current",
+      "method": "GET",
+      "pathRegex": "/users/api/users/current/?$",
+      "allowedQueryParams": [],
+      "screen": "raiz",
+      "approved": false,
+      "notes": "Respuesta de ~1,2 MB (≈150 KB comprimida) con datos del usuario: solo se mide; nunca se persiste el cuerpo."
+    },
+    {
+      "key": "place",
+      "method": "GET",
+      "pathRegex": "/place(/|$)",
+      "allowedQueryParams": [],
+      "screen": "controlCenterShipper",
+      "approved": false,
+      "notes": "Confirmar ruta exacta y ausencia de efectos."
+    },
+    {
+      "key": "setting_i18n",
+      "method": "GET",
+      "pathRegex": "/setting/i18n(/|$)",
+      "allowedQueryParams": [],
+      "screen": "controlCenterShipper",
+      "approved": false,
+      "notes": "Catálogo de textos; candidato de bajo riesgo."
+    },
+    {
+      "key": "notification_user",
+      "method": "GET",
+      "pathRegex": "/notification/user(/|$)",
+      "allowedQueryParams": [],
+      "screen": "controlCenterShipper",
+      "approved": false,
+      "notes": "Verificar que consultar no marca notificaciones como leídas."
+    },
+    {
+      "key": "dashboard_shipping_order_ids",
+      "method": "GET",
+      "pathRegex": "/dashboard/shippingOrderIds(/|$)",
+      "allowedQueryParams": [],
+      "screen": "controlCenterShipper",
+      "approved": false,
+      "notes": "Confirmar método y ausencia de efectos."
+    },
+    {
+      "key": "travel_uploader_loading_order",
+      "method": "GET",
+      "pathRegex": "/travelUploader/api/travelUploader/cbc/loadingOrder/?$",
+      "allowedQueryParams": ["typeOperation"],
+      "screen": "loadOrder",
+      "approved": false,
+      "notes": "typeOperation = catering | direct | distribution. Las variantes .../filter quedan fuera hasta confirmar método (podrían ser POST)."
+    },
+    {
+      "key": "warehouse",
+      "method": "GET",
+      "pathRegex": "/warehouse/api/warehouse/?$",
+      "allowedQueryParams": [],
+      "screen": "warehouses",
+      "approved": false,
+      "notes": "Instalaciones · Configuración."
+    },
+    {
+      "key": "warehouse_list_scheduling",
+      "method": "GET",
+      "pathRegex": "/warehouse/api/warehouse/list/scheduling/?$",
+      "allowedQueryParams": [],
+      "screen": "schedulings",
+      "approved": false,
+      "notes": "Crece durante el día (hasta 586 KB); repetirla genera carga: acordar frecuencia antes de aprobar."
+    },
+    {
+      "key": "warehouse_scheduling_status",
+      "method": "GET",
+      "pathRegex": "/warehouse/api/warehouse/scheduling/status/?$",
+      "allowedQueryParams": [],
+      "screen": "schedulings",
+      "approved": false,
+      "notes": "Catálogo de estados."
+    }
+  ],
+  "denied": [
+    {
+      "key": "dashboard_powerbi_token",
+      "pathRegex": "/dashboard/powerBi/token(/|$)",
+      "reason": "Emite un token: nunca se repite ni se mide su cuerpo."
+    }
+  ]
+}

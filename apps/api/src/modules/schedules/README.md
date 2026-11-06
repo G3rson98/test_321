@@ -1,0 +1,3 @@
+# schedules
+Programaciones (editor visual→cron, zona IANA), pausa/reanudar/duplicar, revisiones, ocurrencias y ventanas de exclusión — RF-PRG-01..05.
+Rutas (ver `ROUTES` de @katalyst/shared): POST /api/v1/schedules/preview, GET /api/v1/schedules, POST /api/v1/schedules, GET /api/v1/schedules/:id, PUT /api/v1/schedules/:id, DELETE /api/v1/schedules/:id, POST /api/v1/schedules/:id/pause, POST /api/v1/schedules/:id/resume, POST /api/v1/schedules/:id/duplicate, GET /api/v1/schedules/:id/next, GET /api/v1/schedules/:id/revisions, GET /api/v1/schedules/:id/occurrences, GET /api/v1/exclusion-windows, POST /api/v1/exclusion-windows, DELETE /api/v1/exclusion-windows/:id.

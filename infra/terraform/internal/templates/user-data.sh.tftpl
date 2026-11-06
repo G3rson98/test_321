@@ -1,0 +1,103 @@
+#!/bin/bash
+# Katalyst — user-data mínimo del host único (Amazon Linux 2023 x86_64).
+# Requisitos: RNF-INF-01, RNF-INF-03, RNF-SEG-05, RNF-CON-04, ESP §18, ARQ §4/§5.
+#
+# SIN SECRETOS: este archivo queda en el state de Terraform y en la metadata de la instancia.
+# Solo instala Docker/Compose y CloudWatch agent, monta el EBS de datos y escribe configuración no secreta.
+# La aplicación (Compose, systemd, firewall de runner-net, backups) se despliega aparte desde deploy/
+# (deploy/scripts/install-host.sh), nunca con remote-exec.
+set -euo pipefail
+exec >>/var/log/katalyst-bootstrap.log 2>&1
+echo "[katalyst-bootstrap] inicio $(date -u +%FT%TZ)"
+
+# --- Paquetes base (repositorio de AL2023) -----------------------------------
+dnf install -y docker amazon-cloudwatch-agent iptables-nft xfsprogs jq logrotate gnupg2
+
+# --- Plugin Docker Compose fijado y verificado por SHA-256 ------------------------
+install -d -m 0755 /usr/libexec/docker/cli-plugins
+curl -fsSL --proto '=https' --tlsv1.2 \
+  -o /tmp/docker-compose \
+  "https://github.com/docker/compose/releases/download/v${docker_compose_version}/docker-compose-linux-x86_64"
+echo "${docker_compose_sha256}  /tmp/docker-compose" | sha256sum -c -
+install -m 0755 /tmp/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+rm -f /tmp/docker-compose
+
+# --- Volumen EBS de datos en /data (no se reformatea si ya tiene sistema de archivos) ----
+DEVICE="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${data_volume_id}"
+for _ in $(seq 1 120); do
+  [ -e "$DEVICE" ] && break
+  sleep 5
+done
+if [ ! -e "$DEVICE" ]; then
+  echo "[katalyst-bootstrap] ERROR: volumen de datos no adjuntado tras 10 min" >&2
+  exit 1
+fi
+if ! blkid "$DEVICE" >/dev/null 2>&1; then
+  echo "[katalyst-bootstrap] volumen de datos vacío: creando XFS"
+  mkfs.xfs -L katalyst-data "$DEVICE"
+fi
+DATA_UUID="$(blkid -s UUID -o value "$DEVICE")"
+install -d -m 0755 /data
+if ! grep -q "UUID=$DATA_UUID" /etc/fstab; then
+  echo "UUID=$DATA_UUID /data xfs defaults,nofail,noatime 0 2" >> /etc/fstab
+fi
+systemctl daemon-reload
+mount -a
+mountpoint -q /data
+
+install -d -m 0700 -o 999  -g 999  /data/postgres
+install -d -m 0700 -o 999  -g 999  /data/redis
+install -d -m 0700 -o root -g root /data/caddy
+install -d -m 0750 -o 1000 -g 1000 /data/runner
+install -d -m 0750 -o 1000 -g 1000 /data/runner/checkouts
+install -d -m 0750 -o 1000 -g 1000 /data/runner/runs
+install -d -m 0700 -o root -g root /data/backups
+install -d -m 0700 -o root -g root /data/backups/work
+install -d -m 0700 -o root -g root /data/backups/state
+install -d -m 0700 -o root -g root /data/restore-work
+
+# --- Directorios en memoria (tmpfs /run) para secretos y credenciales efímeras ----------
+cat > /etc/tmpfiles.d/katalyst.conf <<'EOF'
+d /run/katalyst          0755 root root -
+d /run/katalyst/secrets  0750 root root -
+d /run/katalyst/aws      0750 root 1000 -
+d /run/katalyst/shards   0700 1000 1000 -
+EOF
+systemd-tmpfiles --create /etc/tmpfiles.d/katalyst.conf
+
+install -d -m 0755 /etc/katalyst /opt/katalyst /opt/katalyst/releases
+install -d -m 0750 /var/log/katalyst
+
+# --- Configuración NO secreta de infraestructura para deploy/ -------------------
+cat > /etc/katalyst/infra.env <<'EOF'
+${infra_env}
+EOF
+chmod 0644 /etc/katalyst/infra.env
+
+# --- Docker: logs rotados localmente, sin privilegios nuevos, después de montar /data ----
+install -d -m 0755 /etc/docker
+cat > /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "5" },
+  "live-restore": true,
+  "no-new-privileges": true,
+  "icc": false
+}
+EOF
+install -d -m 0755 /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/10-katalyst-data.conf <<'EOF'
+[Unit]
+RequiresMountsFor=/data
+EOF
+systemctl daemon-reload
+systemctl enable --now docker
+
+# --- CloudWatch agent (métricas de memoria/disco y logs, retención 14 días) -------------
+cat > /opt/aws/amazon-cloudwatch-agent/etc/katalyst.json <<'EOF'
+${cloudwatch_agent_config}
+EOF
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/katalyst.json
+
+echo "[katalyst-bootstrap] fin $(date -u +%FT%TZ)"

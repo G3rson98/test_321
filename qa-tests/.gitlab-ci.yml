@@ -1,0 +1,54 @@
+# CI de ejemplo para el repositorio qa-tests en GitLab (plataforma Git pendiente, ESP §12).
+# Configurar en el proyecto: "Pipelines must succeed" + "All threads must be resolved" + aprobación de un
+# desarrollador (Merge request approvals) y rama principal protegida sin push directo ni auto-merge del bot que abre
+# los MR de grabación (ESP §13.1). Jobs obligatorios: validar, bloqueos-aprobacion, gitleaks.
+# CI solo valida; no ejecuta tests contra FMS DeltaX ni recibe credenciales.
+# Fijar imágenes por digest al adoptar el pipeline.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages: [validar]
+
+variables:
+  PNPM_VERSION: "10.34.9"
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+.node:
+  image: node:24-bookworm-slim
+  before_script:
+    - corepack enable
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - pnpm config set store-dir .pnpm-store
+    - pnpm install --frozen-lockfile
+  cache:
+    key:
+      files: [pnpm-lock.yaml]
+    paths: [.pnpm-store/]
+
+validar:
+  extends: .node
+  stage: validar
+  script:
+    - pnpm run typecheck
+    - pnpm run validate:manifest
+    - pnpm exec playwright test --list
+
+bloqueos-aprobacion:
+  extends: .node
+  stage: validar
+  script:
+    # Falla mientras existan bloqueos de Bloque 0 (IDs placeholder, TODO selector): es intencional.
+    - pnpm run validate:manifest:strict
+
+gitleaks:
+  stage: validar
+  image:
+    name: ghcr.io/gitleaks/gitleaks:v8.30.1
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - gitleaks git --redact --verbose .

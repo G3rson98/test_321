@@ -1,0 +1,34 @@
+{
+  "name": "katalyst",
+  "private": true,
+  "description": "Katalyst (DeltaX QA Runner) — monorepo",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=24.22.2 <25",
+    "pnpm": ">=10.34.9 <11"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "coverage": "pnpm -r --if-present run coverage",
+    "db:migrate": "pnpm --filter @katalyst/api run db:migrate",
+    "db:generate": "pnpm --filter @katalyst/api run db:generate",
+    "secrets:scan": "gitleaks detect --no-git --source . --config .gitleaks.toml --redact"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
+  }
+}

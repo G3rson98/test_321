@@ -1,0 +1,14 @@
+# Katalyst — rotación de logs de scripts del host (/etc/logrotate.d/katalyst).
+# Requisitos: ESP §18, ARQ §6. CloudWatch agent sigue los archivos rotados (copytruncate).
+/var/log/katalyst/*.log {
+    daily
+    rotate 7
+    maxsize 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+    create 0640 root root
+}

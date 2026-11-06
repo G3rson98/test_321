@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "description": "Versión fijada del DXMon legado (ESP §2 'Dependencia por verificar', ESP §13.8 'Obtener y versionar el legado'). Completar al incorporar tools/deltax_monitor.js en un PR revisado; el adaptador rechaza un script sin hash fijado o con hash distinto.",
+  "file": "tools/deltax_monitor.js",
+  "dxmonVersion": null,
+  "sha256": null,
+  "source": null,
+  "usageTerms": null,
+  "receivedAt": null
+}

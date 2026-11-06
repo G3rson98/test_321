@@ -1,0 +1,21 @@
+# Katalyst — stack Docker Compose (ESP §18, ARQ §2). Limpia estado huérfano ANTES de aceptar trabajo.
+[Unit]
+Description=Katalyst: servicios Docker Compose
+After=docker.service katalyst-secrets.service katalyst-runner-firewall.service katalyst-aws-credentials.service
+Requires=docker.service katalyst-secrets.service katalyst-runner-firewall.service
+Wants=katalyst-aws-credentials.service
+RequiresMountsFor=/data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=600
+TimeoutStopSec=180
+ExecStartPre=/opt/katalyst/current/deploy/scripts/cleanup-runner-state.sh
+ExecStart=/opt/katalyst/current/deploy/scripts/compose.sh up -d --wait --remove-orphans
+ExecStop=/opt/katalyst/current/deploy/scripts/compose.sh stop
+StandardOutput=append:/var/log/katalyst/compose.log
+StandardError=append:/var/log/katalyst/compose.log
+
+[Install]
+WantedBy=multi-user.target

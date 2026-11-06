@@ -1,0 +1,37 @@
+{
+  "name": "@katalyst/runner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Supervisor del host (BullMQ run-shards / catalog-listing, Docker o proceso) y ejecutor de shard Playwright de Katalyst",
+  "type": "module",
+  "engines": {
+    "node": ">=24.22.2 <25"
+  },
+  "scripts": {
+    "dev:supervisor": "tsx --conditions=source src/main.supervisor.ts",
+    "dev:executor": "tsx --conditions=source src/main.executor.ts",
+    "start:supervisor": "node dist/main.supervisor.js",
+    "start:executor": "node dist/main.executor.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vitest run test/e2e",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ssm": "3.1163.0",
+    "@katalyst/shared": "workspace:*",
+    "@playwright/test": "1.65.0",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:",
+    "pino": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

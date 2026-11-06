@@ -1,0 +1,27 @@
+# Katalyst — contexto de build mínimo (BuildKit usa <Dockerfile>.dockerignore). RNF-SEG-01: nunca
+# enviar secretos, state de Terraform ni artefactos locales al contexto de build.
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+**/.vite
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.tfplan
+**/.terraform
+**/crash.log
+.git
+infra
+docs
+Especificación_Requerimientos
+qa-tests/test-results
+qa-tests/playwright-report
+**/storageState*.json
+**/.auth

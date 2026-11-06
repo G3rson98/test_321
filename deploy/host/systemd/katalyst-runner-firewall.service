@@ -1,0 +1,17 @@
+# Katalyst — firewall de runner-net (RNF-SEG-05, ESP §13.7). Se reaplica si Docker reinicia.
+[Unit]
+Description=Katalyst: bloquear IMDS/redes internas/host desde ejecutores de tests
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+Before=katalyst.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/katalyst/current/deploy/scripts/runner-net-firewall.sh
+StandardOutput=append:/var/log/katalyst/runner-net-firewall.log
+StandardError=append:/var/log/katalyst/runner-net-firewall.log
+
+[Install]
+WantedBy=docker.service

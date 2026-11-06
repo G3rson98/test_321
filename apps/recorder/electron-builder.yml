@@ -1,0 +1,66 @@
+# Empaquetado del asistente local (RF-GRB-01). Plataforma de aceptación: Windows 11 x64, instalador NSIS por usuario
+# (sin privilegios de administrador). Sin firma de código por ahora (requisito de esta fase).
+# Uso (en Windows 11 x64):  pnpm --filter @katalyst/recorder browsers:fetch   # opcional: Chromium incluido
+#                           pnpm --filter @katalyst/recorder dist:win
+appId: com.deltax.katalyst.recorder
+productName: Katalyst Grabador
+executableName: KatalystGrabador
+copyright: DeltaX
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+asar: true
+# Playwright se ejecuta como CLI en un proceso hijo y lanza Chromium: debe quedar fuera del asar.
+asarUnpack:
+  - node_modules/@playwright/test/**
+  - node_modules/playwright/**
+  - node_modules/playwright-core/**
+extraResources:
+  # Dirección del servidor Katalyst preconfigurada por la organización ({ "serverUrl": "https://…" }).
+  - from: resources/katalyst.config.json
+    to: katalyst.config.json
+  # Chromium incluido en el instalador (opcional). Si no existe, el asistente lo descarga en el primer uso.
+  - from: build/ms-playwright
+    to: ms-playwright
+    filter: ['**/*', '!.gitkeep']
+# Registro del protocolo katalyst:// (NSIS escribe HKCU\Software\Classes\katalyst).
+protocols:
+  - name: Katalyst Grabador
+    schemes: [katalyst]
+npmRebuild: false
+electronFuses:
+  # Necesario: codegen corre con el ejecutable de Electron como Node (ELECTRON_RUN_AS_NODE) — ver docs/decisiones.md.
+  runAsNode: true
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  # El renderer se carga desde file:// (index.html empaquetado) con módulos ES.
+  grantFileProtocolExtraPrivileges: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: KatalystGrabador-${version}-x64-setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Katalyst Grabador
+  uninstallDisplayName: Katalyst Grabador
+  # Al desinstalar se borra userData (incluida la credencial cifrada del dispositivo).
+  deleteAppDataOnUninstall: true
+  runAfterFinish: true
+mac:
+  target: dir
+  identity: null
+linux:
+  target: dir

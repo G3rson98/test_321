@@ -1,0 +1,16 @@
+import { test, expect } from '@playwright/test';
+
+test('test', async ({ page }) => {
+  await page.goto('http://127.0.0.1:58057/');
+  await page.getByRole('button', { name: 'Filtrar' }).click();
+  await page.getByRole('textbox', { name: 'Buscar orden' }).fill('OC-9');
+  await expect(page.getByRole('heading', { name: 'Órdenes de carga' })).toBeVisible();
+  await expect(page.locator('#res')).toContainText('3 resultados');
+  await expect(page.getByRole('textbox', { name: 'Buscar orden' })).toHaveValue('OC-9');
+  await expect(page.getByRole('checkbox', { name: 'Solo pendientes' })).not.toBeChecked();
+  await expect(page.getByRole('tablist')).toMatchAriaSnapshot(`
+    - tablist:
+      - tab "Abastecimiento"
+      - tab "Distribuidores"
+    `);
+});

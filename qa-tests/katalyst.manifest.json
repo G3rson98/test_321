@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "tests": [
+    {
+      "stableKey": "9050dd7e-9ec9-4634-91ac-5b1ecfc8a990",
+      "file": "tests/oc/ordenes-carga.spec.ts",
+      "title": "C900001 Abrir Órdenes de carga y recorrer Abastecimiento, Directa y Distribuidores @oc @humo",
+      "cases": ["C900001"],
+      "tags": ["@oc", "@humo"],
+      "classification": "lectura",
+      "parameterKeys": ["default"],
+      "writeIdempotencyApproved": false,
+      "owner": "qa-automation"
+    },
+    {
+      "stableKey": "254f1b1d-74af-489f-b953-a6a87cfbcf39",
+      "file": "tests/agendamiento/agendamientos.spec.ts",
+      "title": "C900002 Abrir Agendamientos y alternar entre vista lista y calendario @agendamiento @humo",
+      "cases": ["C900002"],
+      "tags": ["@agendamiento", "@humo"],
+      "classification": "lectura",
+      "parameterKeys": ["default"],
+      "writeIdempotencyApproved": false,
+      "owner": "qa-automation"
+    },
+    {
+      "stableKey": "cb8366a4-09c9-4701-a96f-86aa9e2b6e37",
+      "file": "tests/instalaciones/instalaciones.spec.ts",
+      "title": "C900003 Abrir Instalaciones y ver la grilla de configuración de instalaciones @instalaciones @humo",
+      "cases": ["C900003"],
+      "tags": ["@instalaciones", "@humo"],
+      "classification": "lectura",
+      "parameterKeys": ["default"],
+      "writeIdempotencyApproved": false,
+      "owner": "qa-automation"
+    },
+    {
+      "stableKey": "a5f8fc2b-af9c-4c6c-8768-823a8e87f1c3",
+      "file": "tests/arranque/arranque.spec.ts",
+      "title": "C900004 Arrancar la raíz y esperar current dentro del timeout del frontend @arranque @humo",
+      "cases": ["C900004"],
+      "tags": ["@arranque", "@humo"],
+      "classification": "lectura",
+      "parameterKeys": ["default"],
+      "writeIdempotencyApproved": false,
+      "owner": "qa-automation"
+    },
+    {
+      "stableKey": "08da2055-0aa2-4fb5-8240-0b52558d806f",
+      "file": "tests/rendimiento/dxmon.spec.ts",
+      "title": "C900005 Medir ciclo DXMon de raíz, pantallas y GET aprendidos @rendimiento",
+      "cases": ["C900005"],
+      "tags": ["@rendimiento"],
+      "classification": "lectura",
+      "parameterKeys": ["default"],
+      "writeIdempotencyApproved": false,
+      "owner": "qa-automation"
+    }
+  ]
+}

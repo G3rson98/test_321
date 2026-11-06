@@ -1,0 +1,11 @@
+# Katalyst — limpieza de storageState/secretos de asignación huérfanos (ESP §13.7).
+[Unit]
+Description=Katalyst: limpieza de estado huérfano del runner
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/katalyst/current/deploy/scripts/cleanup-runner-state.sh
+StandardOutput=append:/var/log/katalyst/cleanup-runner-state.log
+StandardError=append:/var/log/katalyst/cleanup-runner-state.log

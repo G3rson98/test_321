@@ -1,0 +1,10 @@
+# Katalyst — métricas propias a CloudWatch (RNF-OBS-02, RNF-INF-03).
+[Unit]
+Description=Katalyst: publicar heartbeat, edad de backup y métricas de outbox/cola/leases
+
+[Service]
+Type=oneshot
+TimeoutStartSec=50s
+ExecStart=/opt/katalyst/current/deploy/scripts/publish-metrics.sh
+StandardOutput=append:/var/log/katalyst/publish-metrics.log
+StandardError=append:/var/log/katalyst/publish-metrics.log

@@ -1,0 +1,49 @@
+{
+  "name": "@katalyst/recorder",
+  "productName": "Katalyst Grabador",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Katalyst — asistente local de grabación (Electron + React + Playwright codegen). RF-GRB-01, RF-GRB-02, RF-GRB-06.",
+  "author": "DeltaX QA",
+  "homepage": "https://katalyst.invalid",
+  "main": "out/main/index.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "start": "electron-vite preview",
+    "browsers:fetch": "node scripts/fetch-browsers.mjs",
+    "dist:win": "electron-vite build && electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "electron-vite build && electron-builder --dir --publish never",
+    "lint": "eslint .",
+    "e2e:smoke": "electron-vite build && node test/e2e/electron-smoke.cjs"
+  },
+  "dependencies": {
+    "@playwright/test": "1.65.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@katalyst/shared": "workspace:*",
+    "@tailwindcss/vite": "4.3.5",
+    "@types/node": "catalog:",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "@vitest/coverage-v8": "catalog:",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "electron-vite": "6.0.0",
+    "lucide-react": "1.70.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.5",
+    "typescript": "catalog:",
+    "vite": "7.3.7",
+    "vitest": "catalog:",
+    "zod": "catalog:"
+  }
+}

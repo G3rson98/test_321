@@ -1,0 +1,86 @@
+{
+  "name": "@katalyst/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contratos (Zod) y lógica pura de dominio de Katalyst: schedule, aggregation, perf, sanitize, rbac, manifest, csv",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./enums": {
+      "source": "./src/enums.ts",
+      "types": "./dist/enums.d.ts",
+      "import": "./dist/enums.js"
+    },
+    "./errors": {
+      "source": "./src/errors.ts",
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
+    },
+    "./schemas": {
+      "source": "./src/schemas/index.ts",
+      "types": "./dist/schemas/index.d.ts",
+      "import": "./dist/schemas/index.js"
+    },
+    "./schedule": {
+      "source": "./src/schedule/index.ts",
+      "types": "./dist/schedule/index.d.ts",
+      "import": "./dist/schedule/index.js"
+    },
+    "./aggregation": {
+      "source": "./src/aggregation/index.ts",
+      "types": "./dist/aggregation/index.d.ts",
+      "import": "./dist/aggregation/index.js"
+    },
+    "./perf": {
+      "source": "./src/perf/index.ts",
+      "types": "./dist/perf/index.d.ts",
+      "import": "./dist/perf/index.js"
+    },
+    "./sanitize": {
+      "source": "./src/sanitize/index.ts",
+      "types": "./dist/sanitize/index.d.ts",
+      "import": "./dist/sanitize/index.js"
+    },
+    "./rbac": {
+      "source": "./src/rbac/index.ts",
+      "types": "./dist/rbac/index.d.ts",
+      "import": "./dist/rbac/index.js"
+    },
+    "./manifest": {
+      "source": "./src/manifest/index.ts",
+      "types": "./dist/manifest/index.d.ts",
+      "import": "./dist/manifest/index.js"
+    },
+    "./csv": {
+      "source": "./src/csv/index.ts",
+      "types": "./dist/csv/index.d.ts",
+      "import": "./dist/csv/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

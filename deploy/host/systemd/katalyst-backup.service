@@ -1,0 +1,15 @@
+# Katalyst — backup diario de PostgreSQL (RNF-CON-04).
+[Unit]
+Description=Katalyst: backup cifrado y verificado de PostgreSQL a S3
+After=katalyst.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=3h
+ExecStart=/opt/katalyst/current/deploy/scripts/backup-postgres.sh --reason diario
+StandardOutput=append:/var/log/katalyst/backup-postgres.log
+StandardError=append:/var/log/katalyst/backup-postgres.log

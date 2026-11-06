@@ -1,0 +1,98 @@
+# Katalyst — dependencias para DESARROLLO LOCAL (no es un ambiente AWS ni se usa en el host).
+# Requisitos: ESP §4 (MinIO solo en desarrollo), plan §3 (puertos 5432/6379/9000).
+#
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#
+# Puertos publicados SOLO en loopback (127.0.0.1). Credenciales de ejemplo exclusivas de desarrollo,
+# sobrescribibles por variables de entorno; nunca reutilizarlas fuera de la máquina local.
+# Variables esperadas por las apps (ver .env.example de la raíz):
+#   DATABASE_URL=postgresql://katalyst:katalyst-dev@127.0.0.1:5432/katalyst
+#   REDIS_URL=redis://127.0.0.1:6379/0
+#   KATALYST_ARTIFACT_STORE=s3  KATALYST_S3_ENDPOINT=http://127.0.0.1:9000  bucket katalyst-dev-evidence
+
+name: katalyst-dev
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: katalyst
+      POSTGRES_DB: katalyst
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:-katalyst-dev}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U katalyst -d katalyst"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-bookworm}
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${DEV_MINIO_ROOT_USER:-katalyst-dev}
+      MINIO_ROOT_PASSWORD: ${DEV_MINIO_ROOT_PASSWORD:-katalyst-dev-only}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-dev:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Crea el bucket privado de evidencia de desarrollo con expiración de 30 días (espejo de S3).
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${DEV_MINIO_ROOT_USER:-katalyst-dev}
+      MINIO_ROOT_PASSWORD: ${DEV_MINIO_ROOT_PASSWORD:-katalyst-dev-only}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        mc mb --ignore-existing local/katalyst-dev-evidence
+        mc anonymous set none local/katalyst-dev-evidence
+        mc ilm rule add --expire-days 30 local/katalyst-dev-evidence || true
+    restart: "no"
+
+volumes:
+  pg-dev: {}
+  redis-dev: {}
+  minio-dev: {}

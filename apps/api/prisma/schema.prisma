@@ -1,0 +1,1811 @@
+// =============================================================================
+// Katalyst (DeltaX QA Runner) — esquema PostgreSQL (ESP §7, §13, §17.4).
+//
+// Convenciones: tablas/columnas snake_case (@@map/@map), ids UUID, created_at/updated_at timestamptz(6),
+// todos los instantes en UTC (timestamptz). Enums de PostgreSQL con los valores EXACTOS de
+// packages/shared/src/enums.ts (verificado por test/migration.integration.test.ts).
+// Sin borrado físico de casos, usuarios, tests, ambientes, programaciones ni suites referenciados por historial:
+// archived_at / disabled_at / deleted_at / status=retirado.
+//
+// Excepción documentada: event_log usa `seq BIGSERIAL` como PK (es el `id` SSE / Last-Event-ID, plan §4.4).
+//
+// Restricciones escritas a mano en la migración (Prisma no puede expresarlas) — ver
+// prisma/migrations/*_init/migration.sql, sección "KATALYST HAND-WRITTEN":
+//   ux_worker_lease_active_per_shard     UNIQUE (run_shard_id) WHERE revoked_at IS NULL AND released_at IS NULL
+//                                         → como máximo un lease vigente por shard (ESP §7, §13.3)
+//   ux_test_attempt_running_per_result   UNIQUE (run_result_id) WHERE status = 'corriendo'
+//                                         → un propietario activo por test/variante (ESP §7)
+//   ux_run_active_per_schedule           UNIQUE (schedule_id) WHERE schedule_id IS NOT NULL AND status IN
+//                                         (en_cola, preparando, corriendo, finalizando, cancelando)
+//                                         → máx. una corrida activa o en cola por programación (RF-PRG-04)
+//   ux_capacity_reservation_slot_active  UNIQUE (scope, scope_key, slot) WHERE released_at IS NULL
+//   ux_capacity_reservation_shard_scope  UNIQUE (run_shard_id, scope) WHERE released_at IS NULL AND run_shard_id IS NOT NULL
+//                                         → reserva atómica de capacidad/usuario (ESP §13.3, §13.5)
+//   ux_panel_user_auth_subject           UNIQUE (auth_subject) WHERE auth_subject IS NOT NULL
+//   ux_environment_name_active           UNIQUE (lower(name)) WHERE disabled_at IS NULL
+//   ck_panel_user_email_lower            CHECK (email = lower(email))  (correos normalizados únicos)
+//   ck_run_retries / ck_schedule_retries CHECK (retries BETWEEN 0 AND 2)
+//   ck_test_attempt_no / ck_run_result_parameter_key
+//   ck_exclusion_window_range            CHECK (ends_at > starts_at)
+//   ck_perf_threshold_min_samples        piso de min_samples por métrica (p95/error_rate/timeout_rate ≥ 20, max ≥ 1)
+//   ck_perf_sample_nonneg                duraciones/tamaños no negativos; timeout ⇒ total_ms NULL (censurado)
+//   ck_perf_sample_censored_timeout      censored = timeout; ck_perf_sample_over_29s: over_29s ⇒ completada > 29 000 ms
+//   ck_api_credential_principal          exactamente uno de principal_id (usuario) o service_name
+//   ck_testrail_section_parent           parent_id ≠ id; misma suite vía FK compuesta (parent_id, suite_id) → (id, suite_id)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums (valores = @katalyst/shared/enums)
+// -----------------------------------------------------------------------------
+
+enum RunStatus {
+  en_cola
+  preparando
+  corriendo
+  finalizando
+  terminada
+  cancelando
+  cancelada
+  interrumpida
+  omitida
+
+  @@map("run_status")
+}
+
+enum RunOutcome {
+  pasado
+  inestable
+  fallido
+  bloqueado
+  incompleto
+
+  @@map("run_outcome")
+}
+
+enum SyncStatus {
+  no_aplica
+  pendiente
+  enviando
+  sincronizada
+  requiere_intervencion
+
+  @@map("sync_status")
+}
+
+enum RunTrigger {
+  manual
+  programada
+  api
+
+  @@map("run_trigger")
+}
+
+enum RunResultStatus {
+  pendiente
+  corriendo
+  pasado
+  inestable
+  fallido
+  bloqueado
+  omitido
+  cancelado
+  error_infraestructura
+
+  @@map("run_result_status")
+}
+
+enum AttemptKind {
+  inicial
+  retry
+  recuperacion
+
+  @@map("attempt_kind")
+}
+
+enum AttemptStatus {
+  corriendo
+  pasado
+  fallido
+  omitido
+  cancelado
+  error_infraestructura
+
+  @@map("attempt_status")
+}
+
+enum ErrorCategory {
+  asercion
+  timeout_aplicacion
+  error_aplicacion
+  login
+  navegador_no_disponible
+  worker_perdido
+  resultado_desconocido
+  timeout_corrida
+  infraestructura
+  politica
+  configuracion
+  cancelacion
+  desconocido
+
+  @@map("error_category")
+}
+
+enum ShardStatus {
+  pendiente
+  asignado
+  corriendo
+  completado
+  cancelado
+  interrumpido
+
+  @@map("shard_status")
+}
+
+enum Coverage {
+  completa
+  parcial
+  ninguna
+
+  @@map("coverage")
+}
+
+enum CaseResultStatus {
+  pendiente
+  pasado
+  inestable
+  fallido
+  bloqueado
+  no_ejecutado
+
+  @@map("case_result_status")
+}
+
+enum ResultReason {
+  sin_automatizacion
+  caso_archivado
+  test_retirado
+  test_no_aprobado
+  clasificacion_ausente
+  clasificacion_contradictoria
+  escritura_en_produccion
+  revision_pendiente
+  usuario_con_escritura
+  ambiente_deshabilitado
+  manifiesto_invalido
+  commit_no_disponible
+  variante_faltante
+  excluido_inestable
+  cancelado_por_usuario
+  cancelado_por_programacion
+  worker_perdido
+  recuperacion_agotada
+  escritura_resultado_desconocido
+  timeout_test
+  timeout_preparacion
+  timeout_corrida
+  login_fallido
+  dependencia_fallida
+  sin_capacidad
+  error_interno
+
+  @@map("result_reason")
+}
+
+enum OccurrenceStatus {
+  admitida
+  omitida
+
+  @@map("occurrence_status")
+}
+
+enum OccurrenceSkipReason {
+  solapamiento
+  sin_capacidad
+  caida_servicio
+  ventana_exclusion
+  programacion_pausada
+  configuracion_invalida
+  seleccion_vacia
+  ambiente_deshabilitado
+
+  @@map("occurrence_skip_reason")
+}
+
+enum Classification {
+  lectura
+  escritura
+  sin_clasificar
+
+  @@map("classification")
+}
+
+enum TestStatus {
+  borrador
+  aprobado
+  retirado
+
+  @@map("test_status")
+}
+
+enum LinkReviewStatus {
+  vigente
+  requiere_revision
+
+  @@map("link_review_status")
+}
+
+enum SyncRunStatus {
+  nunca
+  en_curso
+  exitosa
+  fallida
+
+  @@map("sync_run_status")
+}
+
+enum CatalogRevisionStatus {
+  en_curso
+  completa
+  fallida
+
+  @@map("catalog_revision_status")
+}
+
+enum OutboxStatus {
+  pendiente
+  en_proceso
+  entregada
+  requiere_intervencion
+  vencida
+  cancelada
+
+  @@map("outbox_status")
+}
+
+enum NotificationChannelKind {
+  correo
+  slack
+  teams
+
+  @@map("notification_channel_kind")
+}
+
+enum NotificationEvent {
+  corrida_con_fallas
+  corrida_interrumpida
+  umbral_superado
+  sync_requiere_intervencion
+
+  @@map("notification_event")
+}
+
+enum AlertKind {
+  umbral_rendimiento
+  corrida_fallida
+  corrida_interrumpida
+  disponibilidad
+
+  @@map("alert_kind")
+}
+
+enum AlertStatus {
+  activa
+  recuperada
+
+  @@map("alert_status")
+}
+
+enum ArtifactKind {
+  reporte
+  traza
+  video
+  captura
+  log
+  dxmon_samples
+  dxmon_summary
+
+  @@map("artifact_kind")
+}
+
+enum SanitizationStatus {
+  pendiente
+  sanitizado
+  deshabilitado
+  fallido
+  retenido
+
+  @@map("sanitization_status")
+}
+
+enum PerfSource {
+  ui
+  raiz
+  probe
+  app
+
+  @@map("perf_source")
+}
+
+enum PerfMetric {
+  p95
+  max
+  error_rate
+  timeout_rate
+
+  @@map("perf_metric")
+}
+
+enum PerfMetricKind {
+  network_request
+  screen_ready
+  root_ready
+  root_current_wait
+
+  @@map("perf_metric_kind")
+}
+
+/// Procedencia de la medición: series DXMon y Playwright nunca se mezclan (ESP §13.8, D-016).
+enum PerfProvenance {
+  dxmon
+  playwright
+
+  @@map("perf_provenance")
+}
+
+enum PerfErrorKind {
+  http
+  red
+  timeout
+  condicion
+
+  @@map("perf_error_kind")
+}
+
+enum CacheMode {
+  fria
+  caliente
+  desconocida
+
+  @@map("cache_mode")
+}
+
+enum RecordingStatus {
+  creada
+  vinculada
+  grabando
+  validando
+  pr_abierto
+  rechazada
+  cancelada
+  vencida
+
+  @@map("recording_status")
+}
+
+enum DeviceAuthorizationStatus {
+  pendiente
+  aprobada
+  denegada
+  vencida
+  consumida
+
+  @@map("device_authorization_status")
+}
+
+enum PanelRole {
+  qa
+  dev
+  admin
+
+  @@map("panel_role")
+}
+
+enum ApiCredentialKind {
+  token_api
+  servicio_supervisor
+  dispositivo
+
+  @@map("api_credential_kind")
+}
+
+enum ActorKind {
+  panel_user
+  api_credential
+  servicio
+  sistema
+
+  @@map("actor_kind")
+}
+
+enum ExportFormat {
+  csv
+  pdf
+
+  @@map("export_format")
+}
+
+enum JobStatus {
+  pendiente
+  en_proceso
+  listo
+  fallido
+  vencido
+
+  @@map("job_status")
+}
+
+enum GenerationStatus {
+  pendiente
+  en_proceso
+  listo
+  fallido
+  rechazado_presupuesto
+
+  @@map("generation_status")
+}
+
+enum GenerationKind {
+  borrador_desde_caso
+  revision_grabacion
+
+  @@map("generation_kind")
+}
+
+// -----------------------------------------------------------------------------
+// Identidad, sesiones, credenciales y auditoría (RF-USR-01..03)
+// -----------------------------------------------------------------------------
+
+model PanelUser {
+  id           String    @id @default(uuid()) @db.Uuid
+  /// Normalizado a minúsculas (CHECK ck_panel_user_email_lower).
+  email        String    @unique
+  name         String
+  role         PanelRole
+  /// Sujeto del IdP corporativo (OIDC). Único si no es nulo (índice parcial).
+  authSubject  String?   @map("auth_subject")
+  /// argon2id; solo con autenticación propia.
+  passwordHash String?   @map("password_hash")
+  disabledAt   DateTime? @map("disabled_at") @db.Timestamptz(6)
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  version      Int       @default(0)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions               PanelSession[]
+  passwordResetTokens    PasswordResetToken[]
+  apiCredentials         ApiCredential[]                     @relation("ApiCredentialPrincipal")
+  apiCredentialsCreated  ApiCredential[]                     @relation("ApiCredentialCreatedBy")
+  devices                Device[]
+  deviceAuthorizations   DeviceAuthorization[]
+  syncRuns               TestRailSyncRun[]
+  catalogRevisions       CatalogRevision[]
+  linkReviews            TestCaseLink[]
+  suites                 Suite[]
+  schedules              Schedule[]
+  scheduleRevisions      ScheduleRevision[]
+  exclusionWindows       ExclusionWindow[]
+  runs                   Run[]
+  recordings             RecordingSession[]
+  perfThresholds         PerfThreshold[]
+  eventMarks             EventMark[]
+  notificationPreference NotificationPreference?
+  scheduleSubscriptions  NotificationScheduleSubscription[]
+  thresholdSubscriptions NotificationThresholdSubscription[]
+  exportJobs             ExportJob[]
+  generationRequests     GenerationRequest[]
+  runtimeSettingsUpdated RuntimeSetting[]
+  idempotencyKeys        IdempotencyKey[]
+
+  @@map("panel_user")
+}
+
+model PanelSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  /// SHA-256 del token de sesión de la cookie; nunca el token.
+  tokenHash     String    @unique @map("token_hash")
+  csrfHash      String    @map("csrf_hash")
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastSeenAt    DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  ipHash        String?   @map("ip_hash")
+  userAgentHash String?   @map("user_agent_hash")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user PanelUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("panel_session")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user PanelUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_token")
+}
+
+/// Tokens API revocables, credencial del supervisor y credenciales de dispositivo. Nunca almacena token recuperable.
+model ApiCredential {
+  id          String            @id @default(uuid()) @db.Uuid
+  /// Usuario dueño (token_api / dispositivo). Null para credenciales de servicio.
+  principalId String?           @map("principal_id") @db.Uuid
+  /// Nombre del principal de servicio (p. ej. `supervisor:host-1`).
+  serviceName String?           @map("service_name")
+  kind        ApiCredentialKind
+  name        String
+  tokenHash   String            @unique @map("token_hash")
+  /// Permisos (`@katalyst/shared` PERMISSIONS).
+  scopes      String[]
+  hint        String
+  expiresAt   DateTime?         @map("expires_at") @db.Timestamptz(6)
+  revokedAt   DateTime?         @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt  DateTime?         @map("last_used_at") @db.Timestamptz(6)
+  createdById String?           @map("created_by") @db.Uuid
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  principal PanelUser? @relation("ApiCredentialPrincipal", fields: [principalId], references: [id], onDelete: Restrict)
+  createdBy PanelUser? @relation("ApiCredentialCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  device    Device?
+  runs      Run[]
+
+  @@index([principalId])
+  @@map("api_credential")
+}
+
+model AuditLog {
+  id           String    @id @default(uuid()) @db.Uuid
+  actorKind    ActorKind @map("actor_kind")
+  /// UUID del usuario/credencial (sin FK: el historial sobrevive a la desactivación).
+  actorId      String?   @map("actor_id") @db.Uuid
+  actorDisplay String    @map("actor_display")
+  /// `<entidad>.<verbo>` (AUDIT_ACTIONS).
+  action       String
+  entity       String
+  entityId     String?   @map("entity_id")
+  /// Diff sanitizado (solo referencias de secretos).
+  diff         Json?
+  requestId    String?   @map("request_id")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([createdAt, id], map: "ix_audit_log_created_at_id")
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@map("audit_log")
+}
+
+// -----------------------------------------------------------------------------
+// TestRail (ESP §8)
+// -----------------------------------------------------------------------------
+
+model TestRailConnection {
+  id                String        @id @default(uuid()) @db.Uuid
+  baseUrl           String        @map("base_url")
+  username          String
+  /// Referencia a la API key (nunca el valor).
+  secretRef         String        @map("secret_ref")
+  projectExternalId Int?          @map("project_external_id")
+  suiteExternalIds  Int[]         @map("suite_external_ids")
+  enabled           Boolean       @default(true)
+  lastSyncAt        DateTime?     @map("last_sync_at") @db.Timestamptz(6)
+  lastSyncStatus    SyncRunStatus @default(nunca) @map("last_sync_status")
+  version           Int           @default(0)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  projects TestRailProject[]
+  suites   TestRailSuite[]
+  sections TestRailSection[]
+  cases    TestRailCase[]
+  syncRuns TestRailSyncRun[]
+
+  @@map("testrail_connection")
+}
+
+model TestRailProject {
+  id           String    @id @default(uuid()) @db.Uuid
+  connectionId String    @map("connection_id") @db.Uuid
+  externalId   Int       @map("external_id")
+  name         String
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  connection TestRailConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  suites     TestRailSuite[]
+
+  @@unique([connectionId, externalId], map: "ux_testrail_project_connection_external")
+  @@map("testrail_project")
+}
+
+model TestRailSuite {
+  id           String    @id @default(uuid()) @db.Uuid
+  connectionId String    @map("connection_id") @db.Uuid
+  projectId    String    @map("project_id") @db.Uuid
+  externalId   Int       @map("external_id")
+  name         String
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  connection TestRailConnection  @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  project    TestRailProject     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sections   TestRailSection[]
+  cases      TestRailCase[]
+  runTargets RunTestRailTarget[]
+
+  @@unique([connectionId, externalId], map: "ux_testrail_suite_connection_external")
+  @@index([projectId])
+  @@map("testrail_suite")
+}
+
+model TestRailSection {
+  id           String    @id @default(uuid()) @db.Uuid
+  connectionId String    @map("connection_id") @db.Uuid
+  trSectionId  Int       @map("tr_section_id")
+  suiteId      String    @map("suite_id") @db.Uuid
+  name         String
+  /// UUID local del padre; debe pertenecer a la misma suite (FK compuesta).
+  parentId     String?   @map("parent_id") @db.Uuid
+  depth        Int       @default(0)
+  displayOrder Int       @default(0) @map("display_order")
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  connection TestRailConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  suite      TestRailSuite      @relation(fields: [suiteId], references: [id], onDelete: Restrict)
+  parent     TestRailSection?   @relation("SectionTree", fields: [parentId, suiteId], references: [id, suiteId], onDelete: Restrict, onUpdate: Restrict)
+  children   TestRailSection[]  @relation("SectionTree")
+  cases      TestRailCase[]
+
+  @@unique([connectionId, trSectionId], map: "ux_testrail_section_connection_external")
+  @@unique([id, suiteId], map: "ux_testrail_section_id_suite")
+  @@index([suiteId, parentId])
+  @@map("testrail_section")
+}
+
+model TestRailCase {
+  id           String    @id @default(uuid()) @db.Uuid
+  connectionId String    @map("connection_id") @db.Uuid
+  trCaseId     Int       @map("tr_case_id")
+  sectionId    String    @map("section_id") @db.Uuid
+  suiteId      String    @map("suite_id") @db.Uuid
+  title        String
+  steps        Json      @default("[]")
+  expected     String?
+  priority     String?
+  type         String?
+  refs         String?
+  customFields Json      @default("{}") @map("custom_fields")
+  contentHash  String    @map("content_hash")
+  revision     Int       @default(1)
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz(6)
+  syncedAt     DateTime  @map("synced_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  connection  TestRailConnection  @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  section     TestRailSection     @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  suite       TestRailSuite       @relation(fields: [suiteId], references: [id], onDelete: Restrict)
+  revisions   CaseRevision[]
+  links       TestCaseLink[]
+  caseResults CaseResult[]
+  recordings  RecordingSession[]
+  generations GenerationRequest[]
+
+  @@unique([connectionId, trCaseId], map: "ux_testrail_case_connection_external")
+  @@index([sectionId, title, id], map: "ix_testrail_case_section_title_id")
+  /// Búsqueda por texto (ILIKE con comodín inicial) con pg_trgm (D-API-A búsqueda; migración catalog_title_trgm).
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "ix_testrail_case_title_trgm")
+  @@index([suiteId])
+  @@map("testrail_case")
+}
+
+/// Inmutable: historial de contenido sanitizado para snapshots y revisiones (RF-TR-07).
+model CaseRevision {
+  id          String   @id @default(uuid()) @db.Uuid
+  caseId      String   @map("case_id") @db.Uuid
+  revision    Int
+  contentHash String   @map("content_hash")
+  content     Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  case TestRailCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+
+  @@unique([caseId, revision], map: "ux_case_revision_case_revision")
+  @@map("case_revision")
+}
+
+/// Corrida de sincronización (bajo demanda y horaria) con staging transaccional (ESP §8).
+model TestRailSyncRun {
+  id           String        @id @default(uuid()) @db.Uuid
+  connectionId String        @map("connection_id") @db.Uuid
+  status       SyncRunStatus
+  /// `manual` | `programada`.
+  trigger      String
+  startedAt    DateTime      @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt   DateTime?     @map("finished_at") @db.Timestamptz(6)
+  stats        Json          @default("{}")
+  error        String?
+  createdById  String?       @map("created_by") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  connection TestRailConnection    @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  createdBy  PanelUser?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  staging    TestRailCaseStaging[]
+
+  @@index([connectionId, startedAt])
+  @@map("testrail_sync_run")
+}
+
+/// Páginas recorridas antes de aplicar; un fallo no archiva casos ni reemplaza el catálogo (ESP §8).
+model TestRailCaseStaging {
+  id          String   @id @default(uuid()) @db.Uuid
+  syncRunId   String   @map("sync_run_id") @db.Uuid
+  trCaseId    Int      @map("tr_case_id")
+  trSectionId Int      @map("tr_section_id")
+  trSuiteId   Int      @map("tr_suite_id")
+  payload     Json
+  contentHash String   @map("content_hash")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  syncRun TestRailSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+
+  @@unique([syncRunId, trCaseId], map: "ux_testrail_case_staging_run_case")
+  @@map("testrail_case_staging")
+}
+
+// -----------------------------------------------------------------------------
+// Catálogo de tests (RF-CAT)
+// -----------------------------------------------------------------------------
+
+/// Refresco del manifiesto + lista de Playwright (snapshot del manifiesto y hash canónico).
+model CatalogRevision {
+  id             String                @id @default(uuid()) @db.Uuid
+  status         CatalogRevisionStatus
+  gitCommit      String?               @map("git_commit")
+  manifestHash   String?               @map("manifest_hash")
+  manifest       Json?
+  playwrightList Json?                 @map("playwright_list")
+  testCount      Int                   @default(0) @map("test_count")
+  errors         Json                  @default("[]")
+  warnings       Json                  @default("[]")
+  startedAt      DateTime              @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime?             @map("finished_at") @db.Timestamptz(6)
+  createdById    String?               @map("created_by") @db.Uuid
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy PanelUser?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  tests     AutomatedTest[]
+  runs      Run[]
+
+  @@index([status, startedAt])
+  @@map("catalog_revision")
+}
+
+model AutomatedTest {
+  id                       String         @id @default(uuid()) @db.Uuid
+  /// UUID estable del manifiesto en Git (identidad histórica, RF-CAT-05).
+  stableKey                String         @unique(map: "ux_automated_test_stable_key") @map("stable_key") @db.Uuid
+  filePath                 String         @map("file_path")
+  title                    String
+  tags                     String[]
+  classification           Classification
+  status                   TestStatus
+  parameterKeys            String[]       @default(["default"]) @map("parameter_keys")
+  writeIdempotencyApproved Boolean        @default(false) @map("write_idempotency_approved")
+  owner                    String?
+  flakyScore               Float?         @map("flaky_score")
+  flakyNumerator           Int            @default(0) @map("flaky_numerator")
+  flakyDenominator         Int            @default(0) @map("flaky_denominator")
+  manifestCommit           String?        @map("manifest_commit")
+  catalogRevisionId        String?        @map("catalog_revision_id") @db.Uuid
+  createdAt                DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  catalogRevision CatalogRevision? @relation(fields: [catalogRevisionId], references: [id], onDelete: SetNull)
+  links           TestCaseLink[]
+  results         RunResult[]
+
+  @@index([status, title, id])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "ix_automated_test_title_trgm")
+  @@index([tags], type: Gin)
+  @@map("automated_test")
+}
+
+/// Vínculo N:M test↔caso. Revisión pendiente impide producción y programaciones (ESP §7).
+model TestCaseLink {
+  id                   String           @id @default(uuid()) @db.Uuid
+  automatedTestId      String           @map("automated_test_id") @db.Uuid
+  caseId               String           @map("case_id") @db.Uuid
+  reviewedCaseRevision Int?             @map("reviewed_case_revision")
+  reviewStatus         LinkReviewStatus @map("review_status")
+  reviewedById         String?          @map("reviewed_by") @db.Uuid
+  reviewedAt           DateTime?        @map("reviewed_at") @db.Timestamptz(6)
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  automatedTest AutomatedTest @relation(fields: [automatedTestId], references: [id], onDelete: Restrict)
+  case          TestRailCase  @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  reviewedBy    PanelUser?    @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([automatedTestId, caseId], map: "ux_test_case_link_test_case")
+  @@index([caseId])
+  @@map("test_case_link")
+}
+
+model Suite {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  /// SuiteSelector (casos, etiquetas, secciones).
+  selector    Json
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version     Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy PanelUser? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  runs      Run[]
+  schedules Schedule[]
+
+  @@index([name, id])
+  @@map("suite")
+}
+
+// -----------------------------------------------------------------------------
+// Ambientes (destinos DeltaX) y usuarios de prueba (RF-AMB)
+// -----------------------------------------------------------------------------
+
+model Environment {
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String
+  appUrl           String    @map("app_url")
+  apiUrl           String    @map("api_url")
+  isProduction     Boolean   @map("is_production")
+  maxConcurrency   Int       @default(1) @map("max_concurrency")
+  enabled          Boolean   @default(true)
+  disabledAt       DateTime? @map("disabled_at") @db.Timestamptz(6)
+  recordingAllowed Boolean   @default(false) @map("recording_allowed")
+  artifactPolicy   Json      @default("{}") @map("artifact_policy")
+  allowedHosts     String[]  @map("allowed_hosts")
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  testUsers            TestUser[]
+  schedules            Schedule[]
+  runs                 Run[]
+  exclusionWindows     ExclusionWindow[]
+  recordings           RecordingSession[]
+  perfSamples          PerfSample[]
+  perfHourlyAggregates PerfHourlyAggregate[]
+  perfThresholds       PerfThreshold[]
+  eventMarks           EventMark[]
+  alerts               Alert[]
+  capacityReservations CapacityReservation[]
+
+  @@map("environment")
+}
+
+model TestUser {
+  id                String    @id @default(uuid()) @db.Uuid
+  environmentId     String    @map("environment_id") @db.Uuid
+  label             String
+  username          String
+  /// Referencia al secreto; solo el worker lo resuelve.
+  secretRef         String    @map("secret_ref")
+  readOnly          Boolean   @default(true) @map("read_only")
+  allowsConcurrency Boolean   @default(false) @map("allows_concurrency")
+  enabled           Boolean   @default(true)
+  disabledAt        DateTime? @map("disabled_at") @db.Timestamptz(6)
+  version           Int       @default(0)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  environment          Environment           @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  capacityReservations CapacityReservation[]
+
+  @@unique([environmentId, label], map: "ux_test_user_environment_label")
+  @@map("test_user")
+}
+
+/// Parámetros administrativos auditados (timeouts, capacidad, intervalo mínimo).
+model RuntimeSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  value       Json
+  version     Int      @default(0)
+  updatedById String?  @map("updated_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  updatedBy PanelUser? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("runtime_setting")
+}
+
+// -----------------------------------------------------------------------------
+// Programación (RF-PRG, ESP §13.5)
+// -----------------------------------------------------------------------------
+
+model Schedule {
+  id              String    @id @default(uuid()) @db.Uuid
+  name            String
+  suiteId         String?   @map("suite_id") @db.Uuid
+  /// RunSelection normalizada (suite | cases | tags).
+  selector        Json
+  environmentId   String    @map("environment_id") @db.Uuid
+  cronExpressions String[]  @map("cron_expressions")
+  timezone        String    @default("America/La_Paz")
+  windowStart     String?   @map("window_start")
+  windowEnd       String?   @map("window_end")
+  /// Entrada del editor visual (ScheduleEditor) si se usó.
+  editor          Json?
+  description     String?
+  enabled         Boolean   @default(true)
+  pausedAt        DateTime? @map("paused_at") @db.Timestamptz(6)
+  retries         Int       @default(0)
+  notify          Json      @default("{}")
+  revision        Int       @default(1)
+  createdById     String?   @map("created_by") @db.Uuid
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version         Int       @default(0)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  suite                Suite?                             @relation(fields: [suiteId], references: [id], onDelete: Restrict)
+  environment          Environment                        @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  createdBy            PanelUser?                         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  revisions            ScheduleRevision[]
+  occurrences          ScheduleOccurrence[]
+  runs                 Run[]
+  reconciliationCursor ReconciliationCursor?
+  exclusionWindows     ExclusionWindow[]
+  subscriptions        NotificationScheduleSubscription[]
+
+  @@index([enabled, deletedAt])
+  @@index([environmentId])
+  @@map("schedule")
+}
+
+/// Historial de cambios con autor (RF-PRG-03).
+model ScheduleRevision {
+  id          String   @id @default(uuid()) @db.Uuid
+  scheduleId  String   @map("schedule_id") @db.Uuid
+  revision    Int
+  /// create | update | pause | resume | delete | duplicate
+  action      String
+  changedById String?  @map("changed_by") @db.Uuid
+  diff        Json     @default("{}")
+  snapshot    Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  schedule  Schedule   @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  changedBy PanelUser? @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@unique([scheduleId, revision], map: "ux_schedule_revision_schedule_revision")
+  @@index([scheduleId, createdAt])
+  @@map("schedule_revision")
+}
+
+/// Una por instante UTC; incluye omitidas por caída, solapamiento o capacidad.
+model ScheduleOccurrence {
+  id               String                @id @default(uuid()) @db.Uuid
+  scheduleId       String                @map("schedule_id") @db.Uuid
+  scheduleRevision Int                   @map("schedule_revision")
+  scheduledFor     DateTime              @map("scheduled_for") @db.Timestamptz(6)
+  timezone         String
+  status           OccurrenceStatus
+  reason           OccurrenceSkipReason?
+  runId            String?               @unique(map: "ux_schedule_occurrence_run") @map("run_id") @db.Uuid
+  admittedAt       DateTime?             @map("admitted_at") @db.Timestamptz(6)
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  run      Run?     @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@unique([scheduleId, scheduledFor], map: "ux_schedule_occurrence_schedule_instant")
+  @@index([scheduledFor])
+  @@map("schedule_occurrence")
+}
+
+/// Cursor persistido del reconciliador por programación (ESP §13.5).
+model ReconciliationCursor {
+  id               String   @id @default(uuid()) @db.Uuid
+  scheduleId       String   @unique @map("schedule_id") @db.Uuid
+  reconciledUntil  DateTime @map("reconciled_until") @db.Timestamptz(6)
+  scheduleRevision Int      @map("schedule_revision")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@map("reconciliation_cursor")
+}
+
+/// Ventanas de exclusión (RF-PRG-05): global, por ambiente o por programación.
+model ExclusionWindow {
+  id            String    @id @default(uuid()) @db.Uuid
+  environmentId String?   @map("environment_id") @db.Uuid
+  scheduleId    String?   @map("schedule_id") @db.Uuid
+  startsAt      DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt        DateTime  @map("ends_at") @db.Timestamptz(6)
+  reason        String
+  createdById   String?   @map("created_by") @db.Uuid
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  environment Environment? @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  schedule    Schedule?    @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  createdBy   PanelUser?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([startsAt, endsAt])
+  @@map("exclusion_window")
+}
+
+// -----------------------------------------------------------------------------
+// Ejecución (RF-EJE, ESP §13.1–§13.4)
+// -----------------------------------------------------------------------------
+
+model Run {
+  id                    String        @id @default(uuid()) @db.Uuid
+  trigger               RunTrigger
+  suiteId               String?       @map("suite_id") @db.Uuid
+  scheduleId            String?       @map("schedule_id") @db.Uuid
+  environmentId         String        @map("environment_id") @db.Uuid
+  status                RunStatus     @default(en_cola)
+  /// null mientras la corrida está activa.
+  outcome               RunOutcome?
+  syncStatus            SyncStatus    @default(no_aplica) @map("sync_status")
+  reason                ResultReason?
+  /// RunSnapshot inmutable (sin secretos).
+  selectionSnapshot     Json          @map("selection_snapshot")
+  retries               Int           @default(0)
+  catalogRevisionId     String?       @map("catalog_revision_id") @db.Uuid
+  manifestHash          String        @map("manifest_hash")
+  scheduledFor          DateTime?     @map("scheduled_for") @db.Timestamptz(6)
+  queuedAt              DateTime      @default(now()) @map("queued_at") @db.Timestamptz(6)
+  startedAt             DateTime?     @map("started_at") @db.Timestamptz(6)
+  finishedAt            DateTime?     @map("finished_at") @db.Timestamptz(6)
+  cancelRequestedAt     DateTime?     @map("cancel_requested_at") @db.Timestamptz(6)
+  /// SHA completo del commit congelado.
+  gitCommit             String        @map("git_commit")
+  runtimeVersions       Json          @default("{}") @map("runtime_versions")
+  createdById           String?       @map("created_by") @db.Uuid
+  createdByCredentialId String?       @map("created_by_credential_id") @db.Uuid
+  idempotencyKey        String?       @map("idempotency_key")
+  evidenceIncomplete    Boolean       @default(false) @map("evidence_incomplete")
+  version               Int           @default(0)
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  suite                Suite?                @relation(fields: [suiteId], references: [id], onDelete: Restrict)
+  schedule             Schedule?             @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  environment          Environment           @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  catalogRevision      CatalogRevision?      @relation(fields: [catalogRevisionId], references: [id], onDelete: Restrict)
+  createdBy            PanelUser?            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdByCredential  ApiCredential?        @relation(fields: [createdByCredentialId], references: [id], onDelete: Restrict)
+  occurrence           ScheduleOccurrence?
+  targets              RunTestRailTarget[]
+  shards               RunShard[]
+  results              RunResult[]
+  caseResults          CaseResult[]
+  artifacts            Artifact[]
+  outboxDeliveries     OutboxDelivery[]
+  perfSamples          PerfSample[]
+  alerts               Alert[]
+  idempotencyKeys      IdempotencyKey[]
+  capacityReservations CapacityReservation[]
+
+  @@index([environmentId, createdAt, id], map: "ix_run_environment_created_id")
+  @@index([status])
+  @@index([scheduleId, status])
+  @@index([createdAt, id])
+  @@map("run")
+}
+
+/// Un destino TestRail por corrida local/suite; ID externo solo aquí (ESP §16).
+model RunTestRailTarget {
+  id               String     @id @default(uuid()) @db.Uuid
+  runId            String     @map("run_id") @db.Uuid
+  testrailSuiteId  String     @map("testrail_suite_id") @db.Uuid
+  trRunId          Int?       @map("tr_run_id")
+  /// true si se usa una corrida/plan preexistente (RF-TR-06).
+  existingRun      Boolean    @default(false) @map("existing_run")
+  closeExistingRun Boolean    @default(false) @map("close_existing_run")
+  syncStatus       SyncStatus @default(pendiente) @map("sync_status")
+  lastError        String?    @map("last_error")
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run              Run              @relation(fields: [runId], references: [id], onDelete: Restrict)
+  testrailSuite    TestRailSuite    @relation(fields: [testrailSuiteId], references: [id], onDelete: Restrict)
+  caseResults      CaseResult[]
+  outboxDeliveries OutboxDelivery[]
+
+  @@unique([runId, testrailSuiteId], map: "ux_run_testrail_target_run_suite")
+  @@map("run_testrail_target")
+}
+
+/// Partición disjunta de trabajo; lease por shard.
+model RunShard {
+  id                String      @id @default(uuid()) @db.Uuid
+  runId             String      @map("run_id") @db.Uuid
+  shardKey          String      @map("shard_key")
+  status            ShardStatus @default(pendiente)
+  assignedTestKeys  Json        @map("assigned_test_keys")
+  recoveryCount     Int         @default(0) @map("recovery_count")
+  currentGeneration Int         @default(0) @map("current_generation")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run                  Run                   @relation(fields: [runId], references: [id], onDelete: Restrict)
+  leases               WorkerLease[]
+  results              RunResult[]
+  capacityReservations CapacityReservation[]
+
+  @@unique([runId, shardKey], map: "ux_run_shard_run_key")
+  @@index([status])
+  @@map("run_shard")
+}
+
+model WorkerLease {
+  id          String    @id @default(uuid()) @db.Uuid
+  runShardId  String    @map("run_shard_id") @db.Uuid
+  workerId    String    @map("worker_id")
+  /// Fencing token creciente por shard.
+  generation  Int
+  /// SHA-256 del leaseToken del ejecutor.
+  tokenHash   String    @unique @map("token_hash")
+  heartbeatAt DateTime  @map("heartbeat_at") @db.Timestamptz(6)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+  releasedAt  DateTime? @map("released_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  runShard     RunShard      @relation(fields: [runShardId], references: [id], onDelete: Restrict)
+  attempts     TestAttempt[]
+  ownedResults RunResult[]
+
+  @@unique([runShardId, generation], map: "ux_worker_lease_shard_generation")
+  @@index([expiresAt])
+  @@map("worker_lease")
+}
+
+/// Resultado final por test/variante (sin tr_case_id duplicado).
+model RunResult {
+  id                 String          @id @default(uuid()) @db.Uuid
+  runId              String          @map("run_id") @db.Uuid
+  automatedTestId    String          @map("automated_test_id") @db.Uuid
+  parameterKey       String          @default("default") @map("parameter_key")
+  runShardId         String?         @map("run_shard_id") @db.Uuid
+  /// Lease propietario actual (un propietario activo por test/variante).
+  ownerLeaseId       String?         @map("owner_lease_id") @db.Uuid
+  status             RunResultStatus @default(pendiente)
+  reason             ResultReason?
+  reasonText         String?         @map("reason_text")
+  durationMs         Int?            @map("duration_ms")
+  retryCount         Int             @default(0) @map("retry_count")
+  infraRecoveryCount Int             @default(0) @map("infra_recovery_count")
+  evidenceIncomplete Boolean         @default(false) @map("evidence_incomplete")
+  version            Int             @default(0)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run           Run           @relation(fields: [runId], references: [id], onDelete: Restrict)
+  automatedTest AutomatedTest @relation(fields: [automatedTestId], references: [id], onDelete: Restrict)
+  runShard      RunShard?     @relation(fields: [runShardId], references: [id], onDelete: Restrict)
+  ownerLease    WorkerLease?  @relation(fields: [ownerLeaseId], references: [id], onDelete: SetNull)
+  attempts      TestAttempt[]
+  artifacts     Artifact[]
+
+  /// Cubre también el índice (run_id, automated_test_id) de ESP §17.4 (prefijo).
+  @@unique([runId, automatedTestId, parameterKey], map: "ux_run_result_run_test_param")
+  @@index([runId, status])
+  @@index([automatedTestId, createdAt])
+  @@map("run_result")
+}
+
+model TestAttempt {
+  id                String         @id @default(uuid()) @db.Uuid
+  runResultId       String         @map("run_result_id") @db.Uuid
+  attemptNo         Int            @map("attempt_no")
+  kind              AttemptKind
+  status            AttemptStatus  @default(corriendo)
+  startedAt         DateTime       @map("started_at") @db.Timestamptz(6)
+  finishedAt        DateTime?      @map("finished_at") @db.Timestamptz(6)
+  durationMs        Int?           @map("duration_ms")
+  errorCategory     ErrorCategory? @map("error_category")
+  /// Error sanitizado.
+  error             String?
+  workerLeaseId     String?        @map("worker_lease_id") @db.Uuid
+  /// Hash del cuerpo del callback de inicio/resultado (repetición idéntica = acuse original).
+  startRequestHash  String?        @map("start_request_hash")
+  resultRequestHash String?        @map("result_request_hash")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  runResult   RunResult    @relation(fields: [runResultId], references: [id], onDelete: Restrict)
+  workerLease WorkerLease? @relation(fields: [workerLeaseId], references: [id], onDelete: Restrict)
+  artifacts   Artifact[]
+
+  @@unique([runResultId, attemptNo], map: "ux_test_attempt_result_attempt")
+  @@map("test_attempt")
+}
+
+/// Agregado publicable a TestRail (ESP §13.4).
+model CaseResult {
+  id                  String           @id @default(uuid()) @db.Uuid
+  runId               String           @map("run_id") @db.Uuid
+  caseId              String           @map("case_id") @db.Uuid
+  caseRevision        Int              @map("case_revision")
+  runTestRailTargetId String?          @map("run_testrail_target_id") @db.Uuid
+  status              CaseResultStatus @default(pendiente)
+  coverage            Coverage         @default(ninguna)
+  contributingResults Json             @default("[]") @map("contributing_results")
+  durationMs          Int?             @map("duration_ms")
+  comment             String?
+  publishable         Boolean          @default(false)
+  syncStatus          SyncStatus       @default(no_aplica) @map("sync_status")
+  trResultId          Int?             @map("tr_result_id")
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run               Run                @relation(fields: [runId], references: [id], onDelete: Restrict)
+  case              TestRailCase       @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  runTestRailTarget RunTestRailTarget? @relation(fields: [runTestRailTargetId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, caseId], map: "ux_case_result_run_case")
+  @@index([caseId, createdAt])
+  @@map("case_result")
+}
+
+/// Reserva atómica de capacidad (slot global/ambiente/usuario de prueba). Ver índices parciales.
+model CapacityReservation {
+  id            String    @id @default(uuid()) @db.Uuid
+  /// `global` | `environment` | `test_user`
+  scope         String
+  /// `global`, UUID de ambiente o de usuario de prueba.
+  scopeKey      String    @map("scope_key")
+  slot          Int
+  runId         String    @map("run_id") @db.Uuid
+  runShardId    String?   @map("run_shard_id") @db.Uuid
+  environmentId String?   @map("environment_id") @db.Uuid
+  testUserId    String?   @map("test_user_id") @db.Uuid
+  acquiredAt    DateTime  @default(now()) @map("acquired_at") @db.Timestamptz(6)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  releasedAt    DateTime? @map("released_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run         Run          @relation(fields: [runId], references: [id], onDelete: Restrict)
+  runShard    RunShard?    @relation(fields: [runShardId], references: [id], onDelete: Restrict)
+  environment Environment? @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  testUser    TestUser?    @relation(fields: [testUserId], references: [id], onDelete: Restrict)
+
+  @@index([runId])
+  @@index([expiresAt])
+  @@map("capacity_reservation")
+}
+
+/// Claves Idempotency-Key por actor; retención 24 h (ESP §9).
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  /// `<actor_kind>:<actor_id>`
+  actorKey       String   @map("actor_key")
+  key            String
+  method         String
+  path           String
+  /// SHA-256 del cuerpo canónico.
+  requestHash    String   @map("request_hash")
+  /// `en_proceso` | `completada`
+  state          String   @default("en_proceso")
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  runId          String?  @map("run_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run  Run?       @relation(fields: [runId], references: [id], onDelete: SetNull)
+  user PanelUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([actorKey, key], map: "ux_idempotency_key_actor_key")
+  @@index([expiresAt])
+  @@map("idempotency_key")
+}
+
+// -----------------------------------------------------------------------------
+// Outbox, eventos y artefactos
+// -----------------------------------------------------------------------------
+
+/// Cola durable transaccional (TestRail, despacho, notificaciones).
+model OutboxDelivery {
+  id             String       @id @default(uuid()) @db.Uuid
+  runId          String?      @map("run_id") @db.Uuid
+  /// Destino TestRail (orden por destino: crear → resultados → adjuntos → cerrar).
+  targetId       String?      @map("target_id") @db.Uuid
+  alertId        String?      @map("alert_id") @db.Uuid
+  /// OUTBOX_OPERATIONS (texto: contiene puntos).
+  operation      String
+  dedupKey       String       @unique(map: "ux_outbox_delivery_dedup_key") @map("dedup_key")
+  /// Orden dentro del destino.
+  sequence       Int          @default(0)
+  payload        Json
+  status         OutboxStatus @default(pendiente)
+  attempts       Int          @default(0)
+  nextAttemptAt  DateTime?    @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  expiresAt      DateTime     @map("expires_at") @db.Timestamptz(6)
+  externalId     String?      @map("external_id")
+  lastError      String?      @map("last_error")
+  lastHttpStatus Int?         @map("last_http_status")
+  lockedUntil    DateTime?    @map("locked_until") @db.Timestamptz(6)
+  lockedBy       String?      @map("locked_by")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run    Run?               @relation(fields: [runId], references: [id], onDelete: Restrict)
+  target RunTestRailTarget? @relation(fields: [targetId], references: [id], onDelete: Restrict)
+  alert  Alert?             @relation(fields: [alertId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt], map: "ix_outbox_delivery_status_next_attempt")
+  @@index([targetId, sequence])
+  @@index([runId])
+  @@map("outbox_delivery")
+}
+
+/// Secuencia persistida de eventos SSE (plan §4.4). `seq` es el id SSE / Last-Event-ID.
+model EventLog {
+  seq           BigInt   @id @default(autoincrement())
+  type          String
+  entity        String
+  entityId      String   @map("entity_id") @db.Uuid
+  version       Int
+  runId         String?  @map("run_id") @db.Uuid
+  environmentId String?  @map("environment_id") @db.Uuid
+  /// Datos sanitizados.
+  data          Json
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@index([runId, seq])
+  @@map("event_log")
+}
+
+/// Solo evidencia sanitizada es publicable (RF-RES-02).
+model Artifact {
+  id                 String             @id @default(uuid()) @db.Uuid
+  runId              String             @map("run_id") @db.Uuid
+  runResultId        String?            @map("run_result_id") @db.Uuid
+  testAttemptId      String?            @map("test_attempt_id") @db.Uuid
+  kind               ArtifactKind
+  contentType        String             @map("content_type")
+  /// Clave en el almacén privado; null si deshabilitado/no subido.
+  storageKey         String?            @unique(map: "ux_artifact_storage_key") @map("storage_key")
+  sizeBytes          BigInt?            @map("size_bytes")
+  checksum           String?
+  sanitizationStatus SanitizationStatus @default(pendiente) @map("sanitization_status")
+  sanitizationReason String?            @map("sanitization_reason")
+  uploadedAt         DateTime?          @map("uploaded_at") @db.Timestamptz(6)
+  expiresAt          DateTime?          @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run         Run          @relation(fields: [runId], references: [id], onDelete: Restrict)
+  runResult   RunResult?   @relation(fields: [runResultId], references: [id], onDelete: Restrict)
+  testAttempt TestAttempt? @relation(fields: [testAttemptId], references: [id], onDelete: Restrict)
+
+  @@index([runId, kind])
+  @@index([expiresAt])
+  @@map("artifact")
+}
+
+// -----------------------------------------------------------------------------
+// Grabación y dispositivos (ESP §13.6)
+// -----------------------------------------------------------------------------
+
+/// Nunca contiene sesiones de navegador ni contraseñas.
+model RecordingSession {
+  id               String          @id @default(uuid()) @db.Uuid
+  caseId           String          @map("case_id") @db.Uuid
+  environmentId    String          @map("environment_id") @db.Uuid
+  createdById      String          @map("created_by") @db.Uuid
+  deviceId         String?         @map("device_id") @db.Uuid
+  status           RecordingStatus @default(creada)
+  tags             String[]
+  expiresAt        DateTime        @map("expires_at") @db.Timestamptz(6)
+  branch           String?
+  prUrl            String?         @map("pr_url")
+  commit           String?
+  rejectionReasons Json            @default("[]") @map("rejection_reasons")
+  steps            Json            @default("[]")
+  /// Código sanitizado temporal (≤ 24 h, hasta envío/cancelación).
+  codeStorageKey   String?         @map("code_storage_key")
+  codeExpiresAt    DateTime?       @map("code_expires_at") @db.Timestamptz(6)
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  case        TestRailCase        @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  environment Environment         @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  createdBy   PanelUser           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  device      Device?             @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  generations GenerationRequest[]
+
+  @@index([createdById, status])
+  @@index([expiresAt])
+  @@map("recording_session")
+}
+
+/// Asistente local vinculado; su credencial revocable es un api_credential kind=dispositivo.
+model Device {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  credentialId  String    @unique @map("credential_id") @db.Uuid
+  name          String
+  platform      String
+  clientVersion String    @map("client_version")
+  lastSeenAt    DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt     DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user           PanelUser             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  credential     ApiCredential         @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+  recordings     RecordingSession[]
+  authorizations DeviceAuthorization[]
+
+  @@index([userId])
+  @@map("device")
+}
+
+/// Flujo de dispositivo: código de un solo uso, consentimiento en el panel, vencimiento 5 min.
+model DeviceAuthorization {
+  id              String                    @id @default(uuid()) @db.Uuid
+  deviceCodeHash  String                    @unique @map("device_code_hash")
+  userCode        String                    @unique @map("user_code")
+  clientName      String                    @map("client_name")
+  clientVersion   String                    @map("client_version")
+  platform        String
+  status          DeviceAuthorizationStatus @default(pendiente)
+  userId          String?                   @map("user_id") @db.Uuid
+  deviceId        String?                   @map("device_id") @db.Uuid
+  intervalSeconds Int                       @default(5) @map("interval_seconds")
+  lastPolledAt    DateTime?                 @map("last_polled_at") @db.Timestamptz(6)
+  approvedAt      DateTime?                 @map("approved_at") @db.Timestamptz(6)
+  expiresAt       DateTime                  @map("expires_at") @db.Timestamptz(6)
+  createdAt       DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user   PanelUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  device Device?    @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([expiresAt])
+  @@map("device_authorization")
+}
+
+// -----------------------------------------------------------------------------
+// Rendimiento DXMon y alertas (RF-REN, ESP §13.8)
+// -----------------------------------------------------------------------------
+
+model PerfSample {
+  id                 String         @id @default(uuid()) @db.Uuid
+  runId              String         @map("run_id") @db.Uuid
+  environmentId      String         @map("environment_id") @db.Uuid
+  sampleKey          String         @map("sample_key")
+  schemaVersion      Int            @map("schema_version")
+  ts                 DateTime       @db.Timestamptz(6)
+  provenance         PerfProvenance
+  source             PerfSource
+  metricKind         PerfMetricKind @map("metric_kind")
+  /// Endpoint sanitizado y normalizado (sin IDs ni query de negocio); null en pantallas/arranque.
+  endpoint           String?
+  /// Clave de serie recalculada por el backend (`<METHOD> <ruta>` o `<metric_kind> <screen_key>`).
+  endpointKey        String         @map("endpoint_key")
+  method             String?
+  screenKey          String?        @map("screen_key")
+  statusCode         Int?           @map("status_code")
+  ok                 Boolean?
+  totalMs            Float?         @map("total_ms")
+  ttfbMs             Float?         @map("ttfb_ms")
+  downloadMs         Float?         @map("download_ms")
+  bytesWire          BigInt?        @map("bytes_wire")
+  bytesBody          BigInt?        @map("bytes_body")
+  timeout            Boolean        @default(false)
+  timeoutLimitMs     Float?         @map("timeout_limit_ms")
+  censoredAtMs       Float?         @map("censored_at_ms")
+  censored           Boolean        @default(false)
+  networkError       Boolean        @default(false) @map("network_error")
+  errorKind          PerfErrorKind? @map("error_kind")
+  over29s            Boolean        @default(false) @map("over_29s")
+  visible            Boolean?
+  cacheMode          CacheMode      @default(desconocida) @map("cache_mode")
+  workerProfile      String?        @map("worker_profile")
+  invalidReason      String?        @map("invalid_reason")
+  contentEncoding    String?        @map("content_encoding")
+  /// Motivo por campo de los valores null (nunca cero inventado).
+  nullReasons        Json           @default("{}") @map("null_reasons")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  run         Run         @relation(fields: [runId], references: [id], onDelete: Restrict)
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, sampleKey], map: "ux_perf_sample_run_sample_key")
+  @@index([environmentId, endpointKey, source, ts], map: "ix_perf_sample_env_endpoint_source_ts")
+  @@index([ts])
+  @@map("perf_sample")
+}
+
+/// Resumen horario (365 días): conteos, sumas, mín/máx; sin URL cruda ni datos personales.
+model PerfHourlyAggregate {
+  id            String         @id @default(uuid()) @db.Uuid
+  environmentId String         @map("environment_id") @db.Uuid
+  endpointKey   String         @map("endpoint_key")
+  provenance    PerfProvenance
+  source        PerfSource
+  metricKind    PerfMetricKind @map("metric_kind")
+  cacheMode     CacheMode      @map("cache_mode")
+  /// '' cuando no hay perfil (permite unicidad sin NULLs).
+  workerProfile String         @default("") @map("worker_profile")
+  bucketStart   DateTime       @map("bucket_start") @db.Timestamptz(6)
+  started       Int            @default(0)
+  completed     Int            @default(0)
+  discarded     Int            @default(0)
+  sumMs         Float          @default(0) @map("sum_ms")
+  sumSqMs       Float          @default(0) @map("sum_sq_ms")
+  minMs         Float?         @map("min_ms")
+  maxMs         Float?         @map("max_ms")
+  httpErrors    Int            @default(0) @map("http_errors")
+  networkErrors Int            @default(0) @map("network_errors")
+  timeouts      Int            @default(0)
+  over29s       Int            @default(0) @map("over_29s")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+
+  @@unique([environmentId, endpointKey, provenance, source, metricKind, cacheMode, workerProfile, bucketStart], map: "ux_perf_hourly_series_bucket")
+  @@index([bucketStart])
+  @@map("perf_hourly_aggregate")
+}
+
+model PerfThreshold {
+  id              String         @id @default(uuid()) @db.Uuid
+  environmentId   String         @map("environment_id") @db.Uuid
+  /// SeriesSelector (una sola serie) — dimensiones desnormalizadas abajo para consultas.
+  seriesSelector  Json           @map("series_selector")
+  endpointKey     String         @map("endpoint_key")
+  source          PerfSource
+  metricKind      PerfMetricKind @map("metric_kind")
+  cacheMode       CacheMode      @map("cache_mode")
+  workerProfile   String?        @map("worker_profile")
+  metric          PerfMetric
+  /// ms para p95/max; razón 0..1 para rates.
+  limit           Float
+  unit            String
+  windowMin       Int            @map("window_min")
+  minSamples      Int            @map("min_samples")
+  enabled         Boolean        @default(true)
+  label           String?
+  lastEvaluatedAt DateTime?      @map("last_evaluated_at") @db.Timestamptz(6)
+  lastState       String?        @map("last_state")
+  lastValue       Float?         @map("last_value")
+  lastN           Int?           @map("last_n")
+  createdById     String?        @map("created_by") @db.Uuid
+  deletedAt       DateTime?      @map("deleted_at") @db.Timestamptz(6)
+  version         Int            @default(0)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  environment   Environment                         @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  createdBy     PanelUser?                          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  alerts        Alert[]
+  subscriptions NotificationThresholdSubscription[]
+
+  @@index([environmentId, enabled])
+  @@map("perf_threshold")
+}
+
+/// Marcas de despliegues/cambios (RF-REN-04).
+model EventMark {
+  id              String   @id @default(uuid()) @db.Uuid
+  ts              DateTime @db.Timestamptz(6)
+  label           String
+  environmentId   String   @map("environment_id") @db.Uuid
+  frontendVersion String?  @map("frontend_version")
+  backendVersion  String?  @map("backend_version")
+  createdById     String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  createdBy   PanelUser?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([environmentId, ts])
+  @@map("event_mark")
+}
+
+/// Deduplicación persistente por huella (umbral/ambiente/origen/canal); envíos en outbox.
+model Alert {
+  id            String                   @id @default(uuid()) @db.Uuid
+  kind          AlertKind
+  environmentId String?                  @map("environment_id") @db.Uuid
+  thresholdId   String?                  @map("threshold_id") @db.Uuid
+  runId         String?                  @map("run_id") @db.Uuid
+  fingerprint   String                   @unique(map: "ux_alert_fingerprint")
+  payload       Json
+  status        AlertStatus              @default(activa)
+  channel       NotificationChannelKind?
+  lastSentAt    DateTime?                @map("last_sent_at") @db.Timestamptz(6)
+  sendCount     Int                      @default(0) @map("send_count")
+  recoveredAt   DateTime?                @map("recovered_at") @db.Timestamptz(6)
+  lockedUntil   DateTime?                @map("locked_until") @db.Timestamptz(6)
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  environment Environment?     @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  threshold   PerfThreshold?   @relation(fields: [thresholdId], references: [id], onDelete: Restrict)
+  run         Run?             @relation(fields: [runId], references: [id], onDelete: Restrict)
+  deliveries  OutboxDelivery[]
+
+  @@index([status, kind])
+  @@index([createdAt, id])
+  @@map("alert")
+}
+
+// -----------------------------------------------------------------------------
+// Notificaciones (RF-NOT)
+// -----------------------------------------------------------------------------
+
+model NotificationChannel {
+  id         String                  @id @default(uuid()) @db.Uuid
+  kind       NotificationChannelKind @unique
+  enabled    Boolean                 @default(false)
+  /// Webhook o credencial SMTP por referencia.
+  secretRef  String?                 @map("secret_ref")
+  recipients String[]
+  smtp       Json?
+  lastTestAt DateTime?               @map("last_test_at") @db.Timestamptz(6)
+  lastTestOk Boolean?                @map("last_test_ok")
+  version    Int                     @default(0)
+  createdAt  DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("notification_channel")
+}
+
+/// Preferencias por usuario (RF-NOT-03); suscripciones concretas en tablas puente con FK.
+model NotificationPreference {
+  id            String                    @id @default(uuid()) @db.Uuid
+  userId        String                    @unique @map("user_id") @db.Uuid
+  channels      NotificationChannelKind[]
+  events        NotificationEvent[]
+  allSchedules  Boolean                   @default(false) @map("all_schedules")
+  allThresholds Boolean                   @default(false) @map("all_thresholds")
+  version       Int                       @default(0)
+  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user PanelUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preference")
+}
+
+model NotificationScheduleSubscription {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  scheduleId String   @map("schedule_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     PanelUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule Schedule  @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scheduleId], map: "ux_notification_schedule_sub")
+  @@map("notification_schedule_subscription")
+}
+
+model NotificationThresholdSubscription {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  thresholdId String   @map("threshold_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      PanelUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threshold PerfThreshold @relation(fields: [thresholdId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, thresholdId], map: "ux_notification_threshold_sub")
+  @@map("notification_threshold_subscription")
+}
+
+// -----------------------------------------------------------------------------
+// Exportaciones e IA (RF-RES-04, RF-GRB-03/04)
+// -----------------------------------------------------------------------------
+
+model ExportJob {
+  id          String       @id @default(uuid()) @db.Uuid
+  createdById String       @map("created_by") @db.Uuid
+  format      ExportFormat
+  scope       String
+  /// `pagina` | `completo`
+  extent      String
+  filters     Json         @default("{}")
+  status      JobStatus    @default(pendiente)
+  rowCount    Int?         @map("row_count")
+  sizeBytes   BigInt?      @map("size_bytes")
+  storageKey  String?      @map("storage_key")
+  error       String?
+  expiresAt   DateTime?    @map("expires_at") @db.Timestamptz(6)
+  finishedAt  DateTime?    @map("finished_at") @db.Timestamptz(6)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy PanelUser @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([createdById, createdAt])
+  @@map("export_job")
+}
+
+model GenerationRequest {
+  id            String           @id @default(uuid()) @db.Uuid
+  kind          GenerationKind
+  status        GenerationStatus @default(pendiente)
+  caseId        String?          @map("case_id") @db.Uuid
+  recordingId   String?          @map("recording_id") @db.Uuid
+  provider      String
+  model         String
+  promptVersion String           @map("prompt_version")
+  inputTokens   Int?             @map("input_tokens")
+  outputTokens  Int?             @map("output_tokens")
+  costUsd       Decimal?         @map("cost_usd") @db.Decimal(12, 6)
+  result        Json?
+  error         String?
+  createdById   String           @map("created_by") @db.Uuid
+  finishedAt    DateTime?        @map("finished_at") @db.Timestamptz(6)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  case      TestRailCase?     @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  recording RecordingSession? @relation(fields: [recordingId], references: [id], onDelete: Restrict)
+  createdBy PanelUser         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([createdById, createdAt])
+  @@map("generation_request")
+}

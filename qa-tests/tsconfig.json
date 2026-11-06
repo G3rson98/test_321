@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "erasableSyntaxOnly": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": [
+    "playwright.config.ts",
+    "auth.setup.ts",
+    "global-teardown.ts",
+    "pages/**/*.ts",
+    "fixtures/**/*.ts",
+    "tests/**/*.ts",
+    "tools/**/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": ["node_modules", "test-results", "playwright-report"]
+}

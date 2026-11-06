@@ -1,0 +1,515 @@
+# Katalyst — runtime del host único `internal` (Docker Compose + Caddy).
+# Requisitos: RNF-SEG-03, RNF-SEG-05, RNF-CON-04, RNF-INF-03, RNF-OPT-05, RNF-OBS-02, ESP §4, §13.3, §13.7, §18,
+# ARQ §2/§4.
+#
+# Uso en el host (siempre a través del envoltorio, que fija proyecto y archivos de entorno):
+#   /opt/katalyst/current/deploy/scripts/compose.sh up -d --wait
+# Archivos de entorno (NO secretos):
+#   /etc/katalyst/infra.env                 escrito por user-data de Terraform (región, buckets, hostnames)
+#   /opt/katalyst/current/release.env       imágenes por tag+digest de la versión desplegada (release.env.example)
+# Secretos: archivos en tmpfs /run/katalyst/secrets (deploy/scripts/sync-secrets.sh desde SSM SecureString),
+# montados como `secrets:`; nunca en variables de entorno de Compose ni en la imagen.
+#
+# Reglas de aislamiento:
+#  - PostgreSQL y Redis NO publican puertos y solo están en redes `internal: true`.
+#  - Solo `caddy` publica 443/tcp (el security group limita el origen a allowed_cidrs).
+#  - `supervisor` es el ÚNICO servicio con /var/run/docker.sock. API/control/reports/ejecutores no lo reciben.
+#  - Los ejecutores de shard NO son servicios Compose: el supervisor los lanza como contenedores efímeros
+#    en `runner-net` (ver bloque x-katalyst-executor y docs/infraestructura.md).
+#  - IMDSv2 con hop limit 1: ningún contenedor obtiene credenciales del rol desde IMDS. Los servicios
+#    confiables que necesitan AWS (SSM, S3, Route 53) leen credenciales temporales del broker del host
+#    (/run/katalyst/aws, deploy/scripts/aws-credential-broker.sh). Los ejecutores no lo montan.
+#
+# Presupuesto de recursos para 2 vCPU / 8 GiB (ajustar tras benchmark, ARQ §4):
+#   caddy 0.50/256M · api 1.00/1024M · control 0.50/512M · reports 0.50/384M · supervisor 0.50/384M
+#   postgres 1.00/1536M · redis 0.50/512M · ejecutor (1 navegador) 1.50/2560M  → ~7.1 GiB con margen para SO.
+# Pool PostgreSQL total <= 20 (RNF-OPT-05): api 10 + control 6 + reports 3 = 19 (+ conexiones de backup).
+
+name: katalyst
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  init: true
+  read_only: true
+  security_opt:
+    - "no-new-privileges:true"
+  cap_drop:
+    - ALL
+  logging: *logging
+
+x-aws-env: &aws-env
+  AWS_REGION: ${AWS_REGION:?definir en /etc/katalyst/infra.env}
+  AWS_CONFIG_FILE: /run/katalyst/aws/config
+  AWS_SDK_LOAD_CONFIG: "1"
+  AWS_EC2_METADATA_DISABLED: "true"
+
+x-app-env: &app-env
+  NODE_ENV: production
+  TZ: UTC
+  LOG_LEVEL: info
+  KATALYST_ENVIRONMENT: internal
+  KATALYST_PUBLIC_URL: https://${KATALYST_PANEL_HOST:?}
+  KATALYST_REPORTS_URL: https://${KATALYST_REPORTS_HOST:?}
+  KATALYST_SECRET_PROVIDER: ssm
+  KATALYST_SSM_PREFIX: ${KATALYST_SSM_PREFIX:?}
+  KATALYST_ARTIFACT_STORE: s3
+  KATALYST_S3_EVIDENCE_BUCKET: ${KATALYST_S3_EVIDENCE_BUCKET:?}
+  KATALYST_SIGNED_URL_TTL_SECONDS: "300"
+  KATALYST_RUN_EVIDENCE_QUOTA_BYTES: "262144000" # 250 MiB por corrida (ESP §18)
+  KATALYST_RUN_TMP_QUOTA_BYTES: "1073741824" #     1 GiB temporal por corrida (ESP §18)
+  KATALYST_GLOBAL_BROWSER_CONCURRENCY: "1" #       ARQ §4 / RNF-OPT-05
+  KATALYST_HEALTH_FILE: /tmp/health/alive
+  # El entrypoint de la imagen convierte *_FILE en la variable base sin exponer el valor en argumentos.
+  DATABASE_URL_FILE: /run/secrets/database_url
+  REDIS_URL_FILE: /run/secrets/redis_url
+
+x-aws-broker-volume: &aws-broker-volume
+  type: bind
+  source: /run/katalyst/aws
+  target: /run/katalyst/aws
+  read_only: true
+
+# ---------------------------------------------------------------------------------------------
+# Plantilla documental del ejecutor de shard (Compose ignora claves x-*). El supervisor
+# (apps/runner, main.supervisor.ts) traduce estos valores a la API de Docker Engine. Equivale a:
+#
+#   docker run --rm --init \
+#     --name katalyst-shard-<shardId> \
+#     --label katalyst.role=executor --label katalyst.run=<runId> --label katalyst.shard=<shardId> \
+#     --network katalyst-runner-net \
+#     --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+#     --cpus 1.5 --memory 2560m --memory-swap 2560m --pids-limit 512 --shm-size 1g \
+#     --tmpfs /tmp:rw,nosuid,nodev,size=1024m \
+#     --tmpfs /run/katalyst/state:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=1000,gid=1000 \
+#     -v /run/katalyst/shards/<shardId>/secrets:/run/katalyst/secrets:ro \
+#     -v /data/runner/checkouts/<commit>:/work/tests:ro \
+#     -v /data/runner/runs/<runId>/<shardId>:/work/out:rw \
+#     -e HOME=/tmp/home -e KATALYST_WORKER_API_URL=http://worker-gw:8081 \
+#     --log-driver none \
+#     ${KATALYST_EXECUTOR_IMAGE}
+#
+#  - Sin /var/run/docker.sock, sin /run/katalyst/aws, sin redes db/queue/edge.
+#  - /run/katalyst/shards/<id>/secrets está en tmpfs del host (/run) y solo contiene la credencial de
+#    DeltaX de ESA asignación + leaseToken; se borra al terminar (y cleanup-runner-state.sh si hubo crash).
+#  - storageState y perfiles de navegador viven en /run/katalyst/state (tmpfs del contenedor): desaparecen
+#    con el contenedor (ESP §13.7).
+#  - log-driver none: la salida cruda del test no va a CloudWatch; el supervisor la lee por attach y la
+#    sanitiza antes de registrarla.
+#  - El listado de tests (`playwright --list`) y la instalación de dependencias del commit usan la misma
+#    imagen con `--network none` (listado) o runner-net sin secretos (instalación), nunca dentro de la API.
+# ---------------------------------------------------------------------------------------------
+x-katalyst-executor:
+  image: ${KATALYST_EXECUTOR_IMAGE:-PENDIENTE}
+  network: katalyst-runner-net
+  user: "1000:1000"
+  cpus: "1.5"
+  memory: 2560m
+  pids_limit: 512
+  shm_size: 1g
+  tmp_quota: 1024m
+  worker_api_url: http://worker-gw:8081
+
+services:
+  caddy:
+    <<: *hardening
+    image: ${KATALYST_WEB_IMAGE:?definir en release.env}
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "443:443/tcp"
+    environment:
+      <<: *aws-env
+      KATALYST_PANEL_HOST: ${KATALYST_PANEL_HOST:?}
+      KATALYST_REPORTS_HOST: ${KATALYST_REPORTS_HOST:?}
+      KATALYST_EVIDENCE_ORIGIN: https://${KATALYST_S3_EVIDENCE_BUCKET:?}.s3.${AWS_REGION:?}.amazonaws.com
+      KATALYST_ROUTE53_ZONE_ID: ${KATALYST_ROUTE53_ZONE_ID:-}
+      ACME_EMAIL: ${ACME_EMAIL:?definir en /etc/katalyst/site.env}
+    volumes:
+      - type: bind
+        source: ${KATALYST_DATA_DIR:-/data}/caddy
+        target: /data
+      - *aws-broker-volume
+    tmpfs:
+      - /config:size=8m
+      - /tmp:size=16m
+    networks:
+      edge: {}
+      runner-net:
+        ipv4_address: ${KATALYST_WORKER_GW_IP:-172.30.2.10}
+        aliases:
+          - worker-gw
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8099/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+  api:
+    <<: *hardening
+    image: ${KATALYST_API_IMAGE:?definir en release.env}
+    command: ["node", "dist/main.api.js"]
+    user: "1000:1000"
+    environment:
+      <<: [*aws-env, *app-env]
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DATABASE_POOL_MAX: "10"
+    secrets:
+      - database_url
+      - redis_url
+    volumes:
+      - *aws-broker-volume
+    tmpfs:
+      - /tmp:size=256m
+    networks:
+      - edge
+      - db
+      - queue
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1024M
+
+  control:
+    <<: *hardening
+    image: ${KATALYST_API_IMAGE:?}
+    command: ["node", "dist/main.control.js"]
+    user: "1000:1000"
+    environment:
+      <<: [*aws-env, *app-env]
+      DATABASE_POOL_MAX: "6"
+    secrets:
+      - database_url
+      - redis_url
+    volumes:
+      - *aws-broker-volume
+    tmpfs:
+      - /tmp:size=128m
+    networks:
+      - edge # salida a TestRail / canal de notificación / proveedor Git
+      - db
+      - queue
+    healthcheck:
+      # El proceso de control actualiza KATALYST_HEALTH_FILE en cada ciclo del planificador (<= 15 s).
+      test: ["CMD", "node", "-e", "const s=require('fs').statSync(process.env.KATALYST_HEALTH_FILE);process.exit(Date.now()-s.mtimeMs<60000?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  reports:
+    <<: *hardening
+    image: ${KATALYST_API_IMAGE:?}
+    command: ["node", "dist/main.reports.js"]
+    user: "1000:1000"
+    environment:
+      <<: [*aws-env, *app-env]
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      DATABASE_POOL_MAX: "3"
+    secrets:
+      - database_url
+    volumes:
+      - *aws-broker-volume
+    tmpfs:
+      - /tmp:size=256m
+    networks:
+      - edge
+      - db
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+
+  supervisor:
+    <<: *hardening
+    image: ${KATALYST_RUNNER_IMAGE:?definir en release.env}
+    command: ["node", "dist/main.supervisor.js"]
+    user: "1000:1000"
+    group_add:
+      - "${DOCKER_GID:?gid del grupo docker del host; lo calcula scripts/compose.sh}"
+    environment:
+      <<: *aws-env
+      NODE_ENV: production
+      TZ: UTC
+      LOG_LEVEL: info
+      KATALYST_ENVIRONMENT: internal
+      KATALYST_SECRET_PROVIDER: ssm
+      KATALYST_SSM_PREFIX: ${KATALYST_SSM_PREFIX:?}
+      KATALYST_API_INTERNAL_URL: http://api:3000
+      KATALYST_HEALTH_FILE: /tmp/health/alive
+      REDIS_URL_FILE: /run/secrets/redis_url
+      KATALYST_EXECUTOR_IMAGE: ${KATALYST_EXECUTOR_IMAGE:?definir en release.env}
+      KATALYST_EXECUTOR_NETWORK: katalyst-runner-net
+      KATALYST_EXECUTOR_CPUS: "1.5"
+      KATALYST_EXECUTOR_MEMORY_BYTES: "2684354560"
+      KATALYST_EXECUTOR_PIDS_LIMIT: "512"
+      KATALYST_WORKER_API_URL: http://worker-gw:8081
+      KATALYST_SHARD_SECRETS_DIR: /run/katalyst/shards
+      KATALYST_RUNNER_DATA_DIR: /data/runner
+      KATALYST_GLOBAL_BROWSER_CONCURRENCY: "1"
+      KATALYST_RUN_TMP_QUOTA_BYTES: "1073741824"
+      KATALYST_RUN_EVIDENCE_QUOTA_BYTES: "262144000"
+    secrets:
+      - redis_url
+    volumes:
+      # ÚNICO servicio con acceso al socket Docker (equivale a root en el host: código revisado solamente).
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      # Mismas rutas dentro y fuera: el supervisor pasa rutas del HOST como bind mounts del ejecutor.
+      - type: bind
+        source: /run/katalyst/shards
+        target: /run/katalyst/shards
+      - type: bind
+        source: ${KATALYST_DATA_DIR:-/data}/runner
+        target: /data/runner
+      - *aws-broker-volume
+    tmpfs:
+      - /tmp:size=64m
+    networks:
+      - edge # API interna (http://api:3000), SSM y proveedor Git
+      - queue
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('fs').statSync(process.env.KATALYST_HEALTH_FILE);process.exit(Date.now()-s.mtimeMs<60000?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 45s # cancelación termina el árbol de procesos < 30 s (ESP §13.3)
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+
+  postgres:
+    <<: *hardening
+    image: ${POSTGRES_IMAGE:?postgres:16-bookworm@sha256:... en release.env}
+    cap_add: # mínimos para el entrypoint oficial (chown de PGDATA y cambio a usuario postgres)
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    environment:
+      POSTGRES_USER: katalyst
+      POSTGRES_DB: katalyst
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --data-checksums"
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: UTC
+    command:
+      - postgres
+      - -c
+      - max_connections=40
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - log_line_prefix=%m [%p] %q%u@%d
+      - -c
+      - idle_in_transaction_session_timeout=600000
+    secrets:
+      - postgres_password
+    volumes:
+      - type: bind
+        source: ${KATALYST_DATA_DIR:-/data}/postgres
+        target: /var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:size=8m
+      - /tmp:size=64m
+    shm_size: 256m
+    networks:
+      - db # red interna sin puertos publicados
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U katalyst -d katalyst -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1536M
+
+  redis:
+    <<: *hardening
+    image: ${REDIS_IMAGE:?redis:7-bookworm@sha256:... en release.env}
+    user: "999:999"
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    secrets:
+      - redis_acl
+    volumes:
+      - type: bind
+        source: ./redis/redis.conf
+        target: /usr/local/etc/redis/redis.conf
+        read_only: true
+      - type: bind
+        source: ${KATALYST_DATA_DIR:-/data}/redis
+        target: /data
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - queue # red interna sin puertos publicados
+    healthcheck:
+      # Usuario ACL `healthcheck` limitado a PING, sin contraseña real.
+      test: ["CMD", "redis-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "unused", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  # Migraciones Prisma (one-off): scripts/deploy.sh ejecuta `compose.sh run --rm migrate` antes de `up`.
+  migrate:
+    <<: *hardening
+    image: ${KATALYST_API_IMAGE:?}
+    profiles: ["tools"]
+    restart: "no"
+    user: "1000:1000"
+    command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets:
+      - database_url
+    tmpfs:
+      - /tmp:size=64m
+    networks:
+      - db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # MinIO solo para desarrollo local con el stack completo (perfil dev). En el host se usa S3.
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:latest-PENDIENTE-fijar-tag-y-digest}
+    profiles: ["dev"]
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-katalyst-dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-katalyst-dev-only-change-me}
+    volumes:
+      - minio-dev:/data
+    networks:
+      - edge
+    logging: *logging
+
+networks:
+  # Salida a Internet y tráfico entre Caddy y servicios de aplicación.
+  edge:
+    name: katalyst-edge
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${KATALYST_NET_EDGE_SUBNET:-172.30.0.0/24}
+  # PostgreSQL: interna, sin salida ni puertos publicados.
+  db:
+    name: katalyst-db
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${KATALYST_NET_DB_SUBNET:-172.30.1.0/24}
+  # Redis/BullMQ: interna, sin salida ni puertos publicados.
+  queue:
+    name: katalyst-queue
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${KATALYST_NET_QUEUE_SUBNET:-172.30.3.0/24}
+  # Ejecutores de shard: salida a destinos DeltaX autorizados y SOLO al gateway de worker de Caddy.
+  # Bloqueos adicionales (IMDS 169.254.0.0/16, redes privadas/Docker, host, entre ejecutores):
+  # scripts/runner-net-firewall.sh sobre la interfaz fija kt-runner0.
+  runner-net:
+    name: katalyst-runner-net
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: kt-runner0
+    ipam:
+      config:
+        - subnet: ${KATALYST_NET_RUNNER_SUBNET:-172.30.2.0/24}
+
+secrets:
+  database_url:
+    file: /run/katalyst/secrets/database_url
+  redis_url:
+    file: /run/katalyst/secrets/redis_url
+  postgres_password:
+    file: /run/katalyst/secrets/postgres_password
+  redis_acl:
+    file: /run/katalyst/secrets/redis_acl
+
+volumes:
+  minio-dev: {}

@@ -1,0 +1,25 @@
+{
+  "name": "qa-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Repositorio de tests Playwright de Katalyst (DeltaX QA Runner) para FMS DeltaX. Plantilla del repo real qa-tests.",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "list": "playwright test --list",
+    "list:json": "playwright test --list --reporter=json",
+    "validate:manifest": "node scripts/validate-manifest.ts",
+    "validate:manifest:strict": "node scripts/validate-manifest.ts --strict",
+    "test": "playwright test",
+    "test:humo": "playwright test --grep @humo",
+    "test:rendimiento": "playwright test --grep @rendimiento"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}

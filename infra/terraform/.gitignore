@@ -1,0 +1,15 @@
+# Katalyst — artefactos locales de Terraform (sensibles: RNF-INF-01, ESP §18). El lockfile SÍ se versiona.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan.txt
+crash.log
+crash.*.log
+terraform.tfvars
+*.auto.tfvars
+backend.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

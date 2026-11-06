@@ -1,0 +1,3 @@
+# testrail
+Conexión TestRail (solo secret_ref), sincronización paginada con staging, árbol, casos y planes existentes — RF-TR-01, RF-TR-02, RF-TR-03, RF-TR-06, RF-TR-07.
+Rutas (ver `ROUTES` de @katalyst/shared): GET /api/v1/testrail/connection, PUT /api/v1/testrail/connection, POST /api/v1/testrail/connection/test, POST /api/v1/testrail/sync, GET /api/v1/testrail/sync-runs, GET /api/v1/testrail/sync-runs/:id, GET /api/v1/testrail/projects, GET /api/v1/testrail/suites, GET /api/v1/testrail/sections, GET /api/v1/testrail/cases, GET /api/v1/testrail/cases/:id, GET /api/v1/testrail/cases/:id/history, GET /api/v1/testrail/plans/:planId, GET /api/v1/testrail/runs/:trRunId/tests.
