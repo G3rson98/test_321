@@ -8,6 +8,8 @@ import { z } from 'zod';
 import {
   CaseResultSchema,
   CursorQuerySchema,
+  HomeSummaryQuerySchema,
+  HomeSummarySchema,
   IdParamsSchema,
   IdempotencyKeySchema,
   KatalystError,
@@ -27,13 +29,14 @@ import {
   normalizeSelection,
   pageSchema,
 } from '@katalyst/shared';
-import { routeGuard } from '../../lib/auth.js';
+import { hasPermission, routeGuard } from '../../lib/auth.js';
 import { resolvePlan } from '../../services/run-planner.js';
 import { admitPendingShards, createRunIdempotent } from '../../services/run-admission.js';
 import { requestCancel } from '../../services/cancellation.js';
 import { getRunSummary } from '../../services/results.js';
 import { registerRunMetrics } from '../../control/lease-watchdog.js';
 import { cancelDepsOf, principalOf, runDepsOf } from './deps.js';
+import { getHomeSummary } from './summary.js';
 import { getRunDetail, listAttempts, listCaseResults, listResults, listRuns, listTargets } from './queries.js';
 
 const TAGS = ['runs'];
@@ -107,6 +110,24 @@ export const runsRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { tags: TAGS, querystring: RunListQuerySchema, response: { 200: pageSchema(RunSummarySchema) } },
     },
     async (request) => listRuns(app.deps.prisma, request.query),
+  );
+
+  app.get(
+    '/runs/summary',
+    {
+      ...routeGuard('GET', '/runs/summary'),
+      schema: {
+        tags: TAGS,
+        summary: 'Resumen del inicio: éxito 7 días, corridas de hoy, activas y próximas programaciones',
+        querystring: HomeSummaryQuerySchema,
+        response: { 200: HomeSummarySchema },
+      },
+    },
+    async (request) =>
+      getHomeSummary(app.deps.prisma, {
+        todayFrom: request.query.todayFrom,
+        includeSchedules: hasPermission(request.principal, 'schedules.read'),
+      }),
   );
 
   app.get(

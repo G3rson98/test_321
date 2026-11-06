@@ -87,12 +87,16 @@ describe('ambientes (RF-AMB-01)', () => {
     expect(writeUser.json().error.code).toBe('PRODUCTION_BLOCKED');
   });
 
-  it('RNF-SEG-03 matriz: listado resumido para qa sin URLs; administración solo admin', async () => {
+  it('RNF-SEG-03 matriz: listado resumido para qa (con appUrl, sin apiUrl/política/hosts); administración solo admin', async () => {
     const m = await actorMatrix(ctx);
     const list = await ctx.app.inject({ method: 'GET', url: '/api/v1/environments', headers: m.qa });
     expect(list.statusCode).toBe(200);
     const item = list.json().items[0];
-    if (item) expect(item).not.toHaveProperty('appUrl');
+    if (item) {
+      // WEB→API-A: `appUrl` es visible para qa (ya forma parte del snapshot de corrida, `runs.read`); lo demás no.
+      expect(item).toHaveProperty('appUrl');
+      for (const k of ['apiUrl', 'artifactPolicy', 'allowedHosts', 'maxConcurrency', 'version']) expect(item).not.toHaveProperty(k);
+    }
     const adminList = await ctx.app.inject({ method: 'GET', url: '/api/v1/environments?includeDisabled=true', headers: admin });
     if (adminList.json().items[0]) expect(adminList.json().items[0]).toHaveProperty('appUrl');
     for (const [actor, status] of Object.entries({ qa: 403, dev: 403, servicio: 403, anonimo: 401 })) {

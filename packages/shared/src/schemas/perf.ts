@@ -81,6 +81,21 @@ export const EventMarkSchema = z.object({
 });
 export type EventMark = z.infer<typeof EventMarkSchema>;
 
+/**
+ * WEB→API-C: resumen del período COMPLETO por serie, calculado sobre muestras crudas (nunca recombinando p95 por
+ * intervalo). Fuera de la retención de crudos el p95 es `no_disponible` y los bytes son `null`.
+ */
+export const PerfPeriodSummarySchema = z.object({
+  completed: z.number().int().nonnegative(),
+  p95Ms: nullableMs,
+  p95Status: z.enum(['ok', 'muestra_insuficiente', 'no_disponible']),
+  /** Promedio de bytes en red (comprimidos) por respuesta con dato; `null` sin datos. */
+  avgBytesWire: z.number().nonnegative().nullable(),
+  /** Promedio de bytes descomprimidos (cuerpo) por respuesta con dato; `null` sin datos. */
+  avgBytesBody: z.number().nonnegative().nullable(),
+});
+export type PerfPeriodSummary = z.infer<typeof PerfPeriodSummarySchema>;
+
 export const PerfResponseSchema = z.object({
   granularity: PerfGranularitySchema,
   series: z.array(
@@ -88,6 +103,7 @@ export const PerfResponseSchema = z.object({
       key: PerfSeriesKeySchema,
       points: z.array(PerfPointSchema).max(1000),
       comparison: z.array(PerfPointSchema).max(1000).nullable(),
+      summary: PerfPeriodSummarySchema.optional(),
     }),
   ),
   marks: z.array(EventMarkSchema),

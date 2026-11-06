@@ -8,7 +8,7 @@
  * - `/_store/*` (solo `ARTIFACT_STORE=fs`, desarrollo): emula URLs firmadas S3 (HMAC, vencimiento ≤ 5 min, tamaño y
  *   checksum firmados) para carga/descarga directa.
  */
-import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply } from 'fastify';
 import type { Redis } from 'ioredis';
 import { getConfig, type Config } from './config.js';
 import { createLogger } from './logger.js';
@@ -62,7 +62,7 @@ export function buildReportsApp(config: Config, deps?: ReportsDeps): FastifyInst
   app.get('/healthz', async () => ({ status: 'ok', service: 'katalyst-reports', version: config.SERVICE_VERSION }));
   if (!deps) return app;
 
-  const notFound = (reply: import('fastify').FastifyReply) =>
+  const notFound = (reply: FastifyReply) =>
     reply.status(404).type('text/plain; charset=utf-8').send('No encontrado o vencido.');
 
   app.get<{ Params: { ticket: string } }>('/view/:ticket', { config: {} }, async (request, reply) => {

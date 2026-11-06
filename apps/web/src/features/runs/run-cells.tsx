@@ -17,9 +17,9 @@ export function runCounts(r: Pick<RunSummary, 'counts'>) {
   };
 }
 
-/** Título de la corrida: suite o programación; la API no expone una etiqueta para selecciones por casos/etiquetas. */
-export function runTitle(r: Pick<RunSummary, 'suiteName' | 'scheduleName'>): string {
-  return r.suiteName ?? r.scheduleName ?? 'Selección de casos';
+/** Título de la corrida: suite o programación; si no, la etiqueta de la selección que entrega la API (D-054). */
+export function runTitle(r: Pick<RunSummary, 'suiteName' | 'scheduleName' | 'selectionLabel'>): string {
+  return r.suiteName ?? r.scheduleName ?? r.selectionLabel ?? 'Selección de casos';
 }
 
 export function RunIdLink({ run }: { run: Pick<RunSummary, 'id'> }) {

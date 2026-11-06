@@ -6,7 +6,8 @@
  * Los GET se reintentan ante 429 hasta `maxGetRetries` respetando Retry-After (acotado); los POST NO se reintentan
  * aquí: el publicador de outbox decide (backoff y reconciliación por marcador, ESP §13.4).
  */
-import { HttpGuard, HttpGuardError, multipartBody, type GuardedResponse } from '../../lib/http-guard.js';
+import type { HttpGuard} from '../../lib/http-guard.js';
+import { HttpGuardError, multipartBody, type GuardedResponse } from '../../lib/http-guard.js';
 import { SsrfBlockedError } from '../../lib/ssrf.js';
 import { metrics, statusClass } from '../../lib/metrics.js';
 import {

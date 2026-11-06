@@ -124,6 +124,7 @@ export const ROUTES: readonly RouteSpec[] = [
   r('POST', '/runs/preview', 'runs.create', 'runs', ['RF-EJE-07']),
   r('POST', '/runs', 'runs.create', 'runs', ['RF-EJE-01', 'RF-EJE-07'], { idempotent: true }),
   r('GET', '/runs', 'runs.read', 'runs', ['RF-RES-01']),
+  r('GET', '/runs/summary', 'runs.read', 'runs', ['RF-RES-01', 'RF-PRG-01']),
   r('GET', '/runs/:id', 'runs.read', 'runs', ['RF-RES-01', 'RF-RES-05']),
   r('GET', '/runs/:id/results', 'runs.read', 'runs', ['RF-RES-05']),
   r('GET', '/runs/:id/results/:resultId/attempts', 'runs.read', 'runs', ['RF-RES-05', 'RF-EJE-08']),

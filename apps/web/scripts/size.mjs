@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global process, console */
 /**
  * Presupuesto RNF-OPT-03: JS inicial ≤ 250 KiB gzip. "Inicial" = scripts que index.html carga
  * (<script type="module"> + <link rel="modulepreload">) y sus imports estáticos transitivos.

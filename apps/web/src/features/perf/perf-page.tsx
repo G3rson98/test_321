@@ -29,7 +29,7 @@ import { METRIC_KIND_LABEL, selectorOf, summarizePerf, type PerfSummaryRow } fro
 import { errorMessage, fieldErrorsFrom } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { useCan } from '@/lib/auth/session';
-import { formatDateTimeShort, formatSeconds, formatTimeSeconds, startOfLocalDay } from '@/lib/format';
+import { formatBytes, formatDateTimeShort, formatSeconds, formatTimeSeconds, startOfLocalDay } from '@/lib/format';
 import type { PerfSearch } from '@/app/search';
 import type { ChartSeries } from './perf-chart';
 
@@ -60,7 +60,7 @@ export function PerfPage() {
   const env = envList.find((e) => e.id === envId);
   const by = (search.agrupar ?? (search.periodo === '30d' ? 'dia' : 'hora')) === 'dia' ? 'day' : 'hour';
   // El rango se fija al cambiar período/ambiente (minuto exacto) para que la clave de caché sea estable.
-  const r = useMemo(() => range(search.periodo), [search.periodo, envId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const r = useMemo(() => range(search.periodo), [search.periodo, envId]); // `range` depende del reloj: se recalcula solo al cambiar período o ambiente
   const baseQ = { environmentId: envId, from: r.from, to: r.to };
 
   const agg = useQuery({
@@ -104,7 +104,7 @@ export function PerfPage() {
       { id: 'prom', header: 'Promedio', cell: ({ row }) => <span className="font-mono text-[13px]">{formatSeconds(row.original.meanMs)}</span> },
       {
         id: 'p95',
-        header: () => <span title="Peor p95 por intervalo del período (el p95 del período completo no se recombina desde intervalos)">P95 (peor intervalo)</span>,
+        header: () => <span title="p95 del período completo, calculado por la API sobre muestras crudas (nunca promediando intervalos)">P95</span>,
         cell: ({ row }) => {
           const x = row.original;
           if (x.p95Ms === null) return <span className="text-[13px] text-flaky">{x.p95Status === 'no_disponible' ? 'No disponible' : 'Muestra insuficiente'}</span>;
@@ -112,6 +112,16 @@ export function PerfPage() {
           const over = lim !== null && x.p95Ms > lim;
           return <span className={`font-mono text-[13px] font-semibold ${over ? 'text-failed' : ''}`}>{formatSeconds(x.p95Ms)}</span>;
         },
+      },
+      {
+        id: 'red',
+        header: () => <span title="Promedio de bytes transferidos por respuesta (comprimidos); sin dato fuera de la retención de crudos">En red</span>,
+        cell: ({ row }) => <span className="font-mono text-[13px]">{row.original.avgBytesWire !== null ? formatBytes(row.original.avgBytesWire) : '–'}</span>,
+      },
+      {
+        id: 'desc',
+        header: () => <span title="Promedio de bytes por respuesta una vez descomprimida">Descomprimido</span>,
+        cell: ({ row }) => <span className="font-mono text-[13px]">{row.original.avgBytesBody !== null ? formatBytes(row.original.avgBytesBody) : '–'}</span>,
       },
       { id: 'max', header: 'Máximo', cell: ({ row }) => <span className="font-mono text-[13px]">{formatSeconds(row.original.maxMs)}</span> },
       { id: 'n', header: 'n', cell: ({ row }) => <span className="font-mono text-[13px]" title="Respuestas completadas / iniciadas">{row.original.completed}/{row.original.started}</span> },
@@ -129,7 +139,7 @@ export function PerfPage() {
           ),
       },
     ],
-    [canThreshold], // eslint-disable-line react-hooks/exhaustive-deps
+    [canThreshold], // `limitOf`/`setEditing` se leen del render vigente
   );
 
   const errColumns: ColumnDef<PerfErrorItem>[] = [

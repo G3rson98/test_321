@@ -18,10 +18,9 @@ export const qk = {
   session: () => ['session'] as const,
   authProviders: () => ['auth', 'providers'] as const,
   home: {
-    successRate: (f: Filters) => k('runs', 'home-success', f),
-    counts: (f: Filters) => k('runs', 'home-counts', f),
+    // Bajo `dashboard`: el SSE y la reconciliación ya invalidan ese prefijo ante corridas, programaciones y alertas.
+    summary: (f: Filters) => k('dashboard', 'home-summary', f),
     coverage: () => k('catalog', 'home-coverage'),
-    upcoming: () => k('schedules', 'home-upcoming'),
   },
   catalog: {
     all: ['catalog'] as const,
@@ -83,6 +82,8 @@ export const qk = {
     syncRuns: (f: Filters) => k('testrail', 'sync-runs', f),
     deliveries: (f: Filters) => k('testrail', 'deliveries', f),
     connection: () => k('config', 'testrail-connection'),
+    plan: (planId: number) => k('testrail', 'plan', planId),
+    runTests: (trRunId: number) => k('testrail', 'run-tests', trRunId),
   },
   audit: { list: (f: Filters) => k('audit', 'list', f) },
   users: { all: ['config', 'users'] as const, list: (f: Filters) => k('config', 'users', f) },

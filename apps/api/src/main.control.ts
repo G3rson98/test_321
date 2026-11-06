@@ -223,7 +223,8 @@ export async function registerExternalHandlers(ctx: ControlContext): Promise<{ l
   const out = { loaded: [] as string[], failed: [] as string[] };
   const step = async (name: string, fn: () => Promise<boolean>) => {
     try {
-      (await fn()) ? out.loaded.push(name) : out.failed.push(name);
+      if (await fn()) out.loaded.push(name);
+      else out.failed.push(name);
     } catch (err) {
       out.failed.push(name);
       ctx.logger.error({ err, module: name }, 'registro de módulo fallido; se continúa');

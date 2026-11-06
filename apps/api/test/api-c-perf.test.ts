@@ -133,6 +133,22 @@ describe('agregados (RF-REN-02, RF-REN-05, ESP §13.8)', () => {
     expect(p.errorRate).toBeNull(); // < 20 iniciadas
   });
 
+  it('WEB→API-C resumen del período: p95 sobre crudas del período completo (no el peor p95 por intervalo) y bytes promedio', async () => {
+    // 40 completadas repartidas en dos horas distintas: p95 horario (≥ 20 por hora) ≠ p95 del período completo.
+    const samples: (Record<string, unknown> & { sample_key: string; ts: string })[] = [];
+    for (let i = 1; i <= 20; i++) samples.push({ sample_key: `a${i}`, ts: ago(2 * 3_600_000 + i * 1000), total_ms: i * 10, bytes_wire: 1000, bytes_body: 4000 });
+    for (let i = 1; i <= 20; i++) samples.push({ sample_key: `b${i}`, ts: ago(30 * MIN + i * 1000), total_ms: 1000 + i * 10, bytes_wire: 3000, bytes_body: 8000 });
+    const { envId } = await seedRun(samples);
+    const res = await getPerf(prisma, { environmentId: envId, from: ago(4 * 3_600_000), to: now.toISOString(), by: 'hour', compare: 'none' });
+    const s = res.series[0]!;
+    expect(s.points.length).toBeGreaterThanOrEqual(2);
+    expect(s.summary).toMatchObject({ completed: 40, p95Status: 'ok', p95Ms: 1000 + 18 * 10, avgBytesWire: 2000, avgBytesBody: 6000 });
+    // Con pocas muestras el resumen del período dice "muestra_insuficiente" y conserva bytes.
+    const few = await seedRun(Array.from({ length: 5 }, (_, i) => ({ sample_key: `f${i}`, ts: ago((i + 1) * 1000), total_ms: 100, bytes_wire: 500 })));
+    const r2 = await getPerf(prisma, { environmentId: few.envId, from: ago(3_600_000), to: now.toISOString(), by: 'hour', compare: 'none' });
+    expect(r2.series[0]!.summary).toMatchObject({ completed: 5, p95Ms: null, p95Status: 'muestra_insuficiente', avgBytesWire: 500, avgBytesBody: null });
+  });
+
   it('RF-REN-02 series separadas por caché, procedencia y origen (no mezclar DXMon con Playwright ni fría/caliente)', async () => {
     const { envId } = await seedRun([
       { sample_key: 'c1', ts: ago(5000), cache_mode: 'fria', total_ms: 900 },
@@ -234,6 +250,7 @@ describe('agregados (RF-REN-02, RF-REN-05, ESP §13.8)', () => {
     expect(p.p95Status).toBe('no_disponible');
     expect(p.meanMs).toBe(100);
     expect(p.maxMs).toBe(200);
+    expect(res.series[0]!.summary).toMatchObject({ p95Ms: null, p95Status: 'no_disponible', avgBytesWire: null, avgBytesBody: null });
     expect(rawRetentionStart(now).getTime()).toBeGreaterThan(now.getTime() - 90 * 86_400_000);
   });
 

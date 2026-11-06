@@ -414,6 +414,7 @@ export const testrailRoutes: FastifyPluginAsyncZod = async (app) => {
         automated: q.automated,
         includeArchived: q.includeArchived,
         lastResult: q.lastResult,
+        ids: q.ids === undefined ? undefined : Array.isArray(q.ids) ? q.ids : [q.ids],
         tags: q.tag === undefined ? undefined : Array.isArray(q.tag) ? q.tag : [q.tag],
       });
     },

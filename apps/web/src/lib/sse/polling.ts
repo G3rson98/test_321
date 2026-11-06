@@ -11,6 +11,7 @@ export const POLL_MAX_MS = 60_000;
 export function fallbackInterval(state: Pick<SseState, 'status' | 'failures'>, kind: keyof typeof POLL_BASE_MS): number | false {
   if (state.status === 'open' || state.status === 'idle' || state.status === 'connecting') return false;
   if (state.status === 'paused' || state.status === 'closed') return false;
+  // `forbidden`: sin canal en vivo (403); las listas se refrescan por polling de respaldo.
   const exp = Math.max(0, Math.min(state.failures - 1, 4));
   return Math.min(POLL_BASE_MS[kind] * 2 ** exp, POLL_MAX_MS);
 }

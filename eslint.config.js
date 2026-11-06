@@ -26,5 +26,10 @@ export default tseslint.config(
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },
+  {
+    // La salida por consola es la interfaz de las herramientas de línea de comandos.
+    files: ['**/scripts/**'],
+    rules: { 'no-console': 'off' },
+  },
   prettier,
 );

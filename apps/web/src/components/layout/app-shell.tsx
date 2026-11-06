@@ -73,6 +73,8 @@ export function AppShell() {
         qc.setQueryData(['session'], null);
         void navigate({ to: '/ingresar', search: { motivo: 'expirada' }, replace: true });
       },
+      onForbidden: () =>
+        toast.error('Sin permiso para recibir actualizaciones en vivo. La información se actualizará periódicamente.', { id: 'sse-forbidden', duration: 10_000 }),
     });
     return () => mgr.stop();
   }, [qc, navigate]);

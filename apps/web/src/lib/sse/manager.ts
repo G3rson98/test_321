@@ -5,6 +5,8 @@
  * - Agrupa actualizaciones cada 100–250 ms y luego invalida/actualiza cachés por ID/versión.
  * - Suspende en pestaña oculta y al volver reconcilia con el `snapshot` del servidor.
  * - Reconexión con backoff; el estado alimenta el fallback de polling (ver `polling.ts`).
+ * - 401 (sesión vencida) y 403 (sin permiso) NO se reintentan: el canal se detiene (401 → `onUnauthorized`, que
+ *   redirige al ingreso; 403 → `onForbidden`, estado `forbidden` y las listas pasan al polling de respaldo).
  * SSE no es fuente de verdad: los contadores siempre vienen de registros persistidos (ESP §13.2).
  */
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
@@ -12,7 +14,7 @@ import { createStore } from '@tanstack/react-store';
 import { API_BASE, getCsrfToken } from '../api/client';
 import { qk } from '../query/keys';
 
-export type SseStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'paused' | 'unavailable' | 'closed';
+export type SseStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'paused' | 'unavailable' | 'forbidden' | 'closed';
 
 export interface SseState {
   status: SseStatus;
@@ -57,6 +59,8 @@ export interface SseManagerOptions {
   visibility?: VisibilitySource;
   backoffMs?: (attempt: number) => number;
   onUnauthorized?: () => void;
+  /** El servidor negó el canal (403): se muestra «sin permiso» y no se reintenta. */
+  onForbidden?: () => void;
   /** Para pruebas: aplica cada lote. */
   onFlush?: (events: DomainEventLike[]) => void;
 }
@@ -142,7 +146,7 @@ export class SseManager {
     else void this.connect();
   }
 
-  stop(): void {
+  stop(finalStatus: SseStatus = 'closed'): void {
     this.running = false;
     this.unsubscribeVisibility?.();
     this.unsubscribeVisibility = null;
@@ -153,7 +157,7 @@ export class SseManager {
     this.retryTimer = null;
     this.flushTimer = null;
     this.pending = [];
-    this.setStatus('closed');
+    this.setStatus(finalStatus, finalStatus === 'forbidden' ? 1 : undefined);
   }
 
   private setStatus(status: SseStatus, failures?: number): void {
@@ -211,10 +215,17 @@ export class SseManager {
       void res.body?.cancel().catch(() => undefined);
       return;
     }
-    if (res.status === 401) {
+    if (res.status === 401 || res.status === 403) {
+      // Ni la sesión vencida ni la falta de permiso se arreglan reintentando: se detiene el canal.
       this.controller = null;
-      this.opts.onUnauthorized?.();
-      this.stop();
+      void res.body?.cancel().catch(() => undefined);
+      if (res.status === 401) {
+        this.opts.onUnauthorized?.();
+        this.stop();
+      } else {
+        this.stop('forbidden');
+        this.opts.onForbidden?.();
+      }
       return;
     }
     if (!res.ok || !res.body) {

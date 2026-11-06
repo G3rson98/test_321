@@ -66,6 +66,7 @@ import {
   RunPreviewResponseSchema,
   RunResultSchema,
   RunSummarySchema,
+  HomeSummarySchema,
   RunTestRailTargetSchema,
   ScheduleNextResponseSchema,
   ScheduleOccurrenceSchema,
@@ -77,6 +78,8 @@ import {
   TestRailCaseDetailSchema,
   TestRailCaseSummarySchema,
   TestRailConnectionSchema,
+  TestRailPlanSchema,
+  TestRailRunTestsSchema,
   TestRailConnectionTestResponseSchema,
   TestRailSectionSchema,
   TestRailSyncRunSchema,
@@ -85,7 +88,7 @@ import {
 import { z } from 'zod';
 import { permissionsForRole } from '@katalyst/shared/rbac';
 import { previewOccurrences, nextOccurrence, buildCronExpressions, ScheduleBuildError, validateSchedule } from '@katalyst/shared/schedule';
-import { CASE_RESULT_STATUSES, type RunResultStatus } from '@katalyst/shared/enums';
+import { ACTIVE_RUN_STATUSES, CASE_RESULT_STATUSES, type RunResultStatus } from '@katalyst/shared/enums';
 import type {
   Environment,
   ExportJob,
@@ -195,6 +198,11 @@ function sortBy<T>(items: T[], sort: string | null, getters: Record<string, (x: 
     return desc ? -cmp : cmp;
   });
 }
+/** Resumen de caso como lo agrega el servidor: etiquetas/clasificación/inestabilidad solo de los tests vinculados. */
+function caseOut<C extends { automated: boolean; tags: string[]; classification: unknown; flaky: unknown }>(c: C): C {
+  return c.automated ? c : { ...c, tags: [], classification: null, flaky: null };
+}
+
 const all = (url: URL, k: string) => url.searchParams.getAll(k).flatMap((v) => v.split(',')).filter(Boolean);
 async function body<T>(request: Request): Promise<T> {
   try {
@@ -352,6 +360,16 @@ function buildPreview(b: RunBody, cs: db.MockCase[]): RunPreview | Response {
     testrailTargets: [{ testrailSuiteId: db.ids.TR_SUITE_ID, name: 'Master', caseCount: planCases.length }],
   };
 }
+const MOCK_TR_PLANS = [
+  {
+    planId: 7001,
+    name: 'Plan de regresión · noviembre',
+    entries: [
+      { suiteExternalId: 1, runs: [{ trRunId: 7101, name: 'Master · Chrome', isCompleted: false }, { trRunId: 7102, name: 'Master · Edge', isCompleted: true }] },
+    ],
+  },
+  { planId: 7002, name: 'Plan vacío', entries: [] },
+];
 const idempotency = new Map<string, { body: string; runId: string }>();
 
 // ---------------------------------------------------------------------------
@@ -475,17 +493,22 @@ export const handlers = [
     const tags = all(url, 'tag');
     if (tags.length) list = list.filter((c) => c.tags.some((t) => tags.includes(t)));
     const lr = url.searchParams.get('lastResult');
-    if (lr && !CASE_RESULT_STATUSES.includes(lr as never)) return err(422, 'VALIDATION_FAILED', 'Estado de último resultado desconocido.');
-    if (lr) list = list.filter((c) => c.lastResult?.status === lr);
+    if (lr && lr !== 'sin_ejecutar' && !CASE_RESULT_STATUSES.includes(lr as never)) return err(422, 'VALIDATION_FAILED', 'Estado de último resultado desconocido.');
+    if (lr === 'sin_ejecutar') list = list.filter((c) => !c.lastResult);
+    else if (lr) list = list.filter((c) => c.lastResult?.status === lr);
+    const ids = all(url, 'ids');
+    if (ids.length > 100) return err(422, 'VALIDATION_FAILED', 'Máximo 100 IDs.');
+    if (ids.length) list = (url.searchParams.get('includeArchived') === 'true' ? db.cases : list).filter((c) => ids.includes(c.id));
     list = sortBy(list, url.searchParams.get('sort') ?? 'title', { title: (c) => c.title, trCaseId: (c) => c.trCaseId, syncedAt: (c) => c.syncedAt }, (c) => c.id);
-    return replyPage(TestRailCaseSummarySchema, page(list, url));
+    const p = page(list, url);
+    return replyPage(TestRailCaseSummarySchema, { ...p, items: p.items.map(caseOut) });
   }),
   http.get(`${API}/testrail/cases/:id`, ({ request, params }) => {
     const g = guard(request);
     if (isResp(g)) return g;
     const c = db.caseById(String(params.id));
     if (!c) return notFound();
-    return reply(TestRailCaseDetailSchema, c);
+    return reply(TestRailCaseDetailSchema, caseOut(c));
   }),
   http.get(`${API}/testrail/cases/:id/history`, ({ request, params }) => {
     const g = guard(request);
@@ -532,6 +555,23 @@ export const handlers = [
     const g = guard(request);
     if (isResp(g)) return g;
     return replyPage(TestRailSyncRunSchema, page(db.syncRuns, new URL(request.url)));
+  }),
+  // RF-TR-06 · lectura en vivo de planes y corridas existentes (planes 7001/7002; corridas 3300–3399 y las de los planes).
+  http.get(`${API}/testrail/plans/:planId`, ({ request, params }) => {
+    const g = guard(request);
+    if (isResp(g)) return g;
+    const id = Number(params.planId);
+    const plan = MOCK_TR_PLANS.find((p) => p.planId === id);
+    return plan ? reply(TestRailPlanSchema, plan) : notFound();
+  }),
+  http.get(`${API}/testrail/runs/:trRunId/tests`, ({ request, params }) => {
+    const g = guard(request);
+    if (isResp(g)) return g;
+    const id = Number(params.trRunId);
+    const known = (id >= 3300 && id < 3400) || MOCK_TR_PLANS.some((p) => p.entries.some((e) => e.runs.some((r) => r.trRunId === id)));
+    if (!known) return notFound();
+    const sample = db.cases.filter((c) => c.automated).slice(0, 3 + (id % 4));
+    return reply(TestRailRunTestsSchema, { trRunId: id, tests: sample.map((c, i) => ({ trTestId: id * 100 + i, trCaseId: c.trCaseId, title: c.title })) });
   }),
   http.get(`${API}/testrail/connection`, ({ request }) => {
     const g = guard(request, 'admin');
@@ -793,6 +833,37 @@ export const handlers = [
     list = sortBy(list, url.searchParams.get('sort') ?? '-createdAt', { createdAt: (r) => r.createdAt, finishedAt: (r) => r.finishedAt }, (r) => r.id);
     return replyPage(RunSummarySchema, page(list, url));
   }),
+  // Resumen del inicio (debe ir antes de `/runs/:id`): mismas reglas que la API (D-054).
+  http.get(`${API}/runs/summary`, ({ request }) => {
+    const g = guard(request);
+    if (isResp(g)) return g;
+    const url = new URL(request.url);
+    const now = Date.now();
+    const DAY = 86_400_000;
+    const todayFrom = url.searchParams.get('todayFrom') ?? new Date(Math.floor(now / DAY) * DAY).toISOString();
+    const rate = (fromMs: number, toMs: number) => {
+      const done = db.runs.filter((r) => r.status === 'terminada' && r.outcome !== null && r.createdAt >= new Date(fromMs).toISOString() && r.createdAt < new Date(toMs).toISOString());
+      const ok = done.filter((r) => r.outcome === 'pasado' || r.outcome === 'inestable').length;
+      return { rate: done.length ? ok / done.length : null, runs: done.length };
+    };
+    const cur = rate(now - 7 * DAY, now);
+    const prev = rate(now - 14 * DAY, now - 7 * DAY);
+    const envName = new Map(db.environments.map((e) => [e.id, e.name]));
+    const upcoming = db.schedules
+      .filter((s) => s.enabled && !s.deletedAt)
+      .map((s) => ({ s, at: nextOccurrence(s.cronExpressions, s.timezone, new Date()) }))
+      .filter((x): x is { s: (typeof db.schedules)[number]; at: Date } => x.at !== null)
+      .sort((a, b) => a.at.getTime() - b.at.getTime())
+      .slice(0, 3)
+      .map(({ s, at }) => ({ scheduleId: s.id, name: s.name, environmentId: s.environmentId, environmentName: envName.get(s.environmentId) ?? '', at: at.toISOString() }));
+    return reply(HomeSummarySchema, {
+      generatedAt: new Date(now).toISOString(),
+      successRate: { current: cur.rate, previous: prev.rate, currentRuns: cur.runs, previousRuns: prev.runs },
+      runsToday: db.runs.filter((r) => r.createdAt >= todayFrom).length,
+      running: db.runs.filter((r) => (ACTIVE_RUN_STATUSES as readonly string[]).includes(r.status)).length,
+      upcoming,
+    });
+  }),
   http.get(`${API}/runs/:id`, ({ request, params }) => {
     const g = guard(request);
     if (isResp(g)) return g;
@@ -887,7 +958,7 @@ export const handlers = [
       retries: b.retries ?? 0,
       status: 'en_cola',
       plan: pv.tests.map((t) => (t.executable ? 'pendiente' : 'bloqueado') as RunResultStatus),
-      selectionLabel: b.tags ? b.tags.join(' ') : null,
+      selectionLabel: b.tags ? `Etiquetas ${b.tags.join(', ')}` : null,
     });
     if (!pv.willLaunchBrowser) {
       run.status = 'terminada';
@@ -1114,11 +1185,25 @@ export const handlers = [
     const compare = url.searchParams.get('compare') === 'previous_period';
     const out: PerfResponse = {
       granularity: by,
-      series: db.PERF_SERIES.slice(0, 3).map((s) => ({
-        key: { environmentId: envId, endpointKey: s.endpointKey, provenance: 'dxmon', source: s.source, metricKind: s.metricKind, cacheMode: 'desconocida', workerProfile: null },
-        points: perfPoints(s, from, Math.min(to, Date.now()), by),
-        comparison: compare ? perfPoints(s, from - (to - from), Math.min(to, Date.now()) - (to - from), by, 1).map((p) => ({ ...p, bucketStart: new Date(Date.parse(p.bucketStart) + (to - from)).toISOString() })) : null,
-      })),
+      series: db.PERF_SERIES.slice(0, 3).map((s) => {
+        const points = perfPoints(s, from, Math.min(to, Date.now()), by);
+        // Resumen del período (API-C): p95 sobre «muestras crudas» (aquí, el p95 de los p95 por intervalo) y bytes.
+        const p95s = points.map((p) => p.p95Ms).filter((x): x is number => x !== null).sort((a, b) => a - b);
+        const completed = points.reduce((a, p) => a + p.completed, 0);
+        const enough = completed >= 20 && p95s.length > 0;
+        return {
+          key: { environmentId: envId, endpointKey: s.endpointKey, provenance: 'dxmon' as const, source: s.source, metricKind: s.metricKind, cacheMode: 'desconocida' as const, workerProfile: null },
+          points,
+          comparison: compare ? perfPoints(s, from - (to - from), Math.min(to, Date.now()) - (to - from), by, 1).map((p) => ({ ...p, bucketStart: new Date(Date.parse(p.bucketStart) + (to - from)).toISOString() })) : null,
+          summary: {
+            completed,
+            p95Ms: enough ? p95s[Math.min(p95s.length - 1, Math.ceil(p95s.length * 0.95) - 1)]! : null,
+            p95Status: enough ? ('ok' as const) : ('muestra_insuficiente' as const),
+            avgBytesWire: Math.round(18_000 + hash01(s.endpointKey) * 240_000),
+            avgBytesBody: Math.round(90_000 + hash01(s.endpointKey + 'b') * 900_000),
+          },
+        };
+      }),
       marks: db.marks.filter((m) => m.environmentId === envId && Date.parse(m.ts) >= from && Date.parse(m.ts) <= to),
       lastSampleAt: new Date(Date.now() - 4 * 60_000).toISOString(),
       gaps: [],

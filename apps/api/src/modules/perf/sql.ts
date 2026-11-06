@@ -30,7 +30,7 @@ export const HTTP_ERROR_SQL = Prisma.sql`(CASE
   ELSE FALSE END)`;
 const VALID = Prisma.sql`(invalid_reason IS NULL)`;
 const RESPONDED = Prisma.sql`(invalid_reason IS NULL AND NOT timeout AND NOT network_error)`;
-const COMPLETED = Prisma.sql`(invalid_reason IS NULL AND NOT timeout AND NOT network_error AND total_ms IS NOT NULL)`;
+export const COMPLETED_SQL = Prisma.sql`(invalid_reason IS NULL AND NOT timeout AND NOT network_error AND total_ms IS NOT NULL)`;
 
 /** Columnas agregadas (requiere FROM perf_sample). */
 export const STATS_COLUMNS = Prisma.sql`
@@ -38,15 +38,15 @@ export const STATS_COLUMNS = Prisma.sql`
   count(*) FILTER (WHERE ${VALID})::int AS started,
   count(*) FILTER (WHERE ${VALID} AND timeout)::int AS timeouts,
   count(*) FILTER (WHERE ${VALID} AND NOT timeout AND network_error)::int AS network_errors,
-  count(*) FILTER (WHERE ${COMPLETED})::int AS completed,
+  count(*) FILTER (WHERE ${COMPLETED_SQL})::int AS completed,
   count(*) FILTER (WHERE ${RESPONDED} AND ${HTTP_ERROR_SQL})::int AS http_errors,
-  count(*) FILTER (WHERE ${COMPLETED} AND total_ms > ${OVER_29S_THRESHOLD_MS})::int AS over29s,
-  avg(total_ms) FILTER (WHERE ${COMPLETED})::float8 AS mean_ms,
-  max(total_ms) FILTER (WHERE ${COMPLETED})::float8 AS max_ms,
-  min(total_ms) FILTER (WHERE ${COMPLETED})::float8 AS min_ms,
-  coalesce(sum(total_ms) FILTER (WHERE ${COMPLETED}), 0)::float8 AS sum_ms,
-  coalesce(sum(total_ms * total_ms) FILTER (WHERE ${COMPLETED}), 0)::float8 AS sum_sq_ms,
-  (percentile_disc(0.95) WITHIN GROUP (ORDER BY total_ms) FILTER (WHERE ${COMPLETED}))::float8 AS p95_ms`;
+  count(*) FILTER (WHERE ${COMPLETED_SQL} AND total_ms > ${OVER_29S_THRESHOLD_MS})::int AS over29s,
+  avg(total_ms) FILTER (WHERE ${COMPLETED_SQL})::float8 AS mean_ms,
+  max(total_ms) FILTER (WHERE ${COMPLETED_SQL})::float8 AS max_ms,
+  min(total_ms) FILTER (WHERE ${COMPLETED_SQL})::float8 AS min_ms,
+  coalesce(sum(total_ms) FILTER (WHERE ${COMPLETED_SQL}), 0)::float8 AS sum_ms,
+  coalesce(sum(total_ms * total_ms) FILTER (WHERE ${COMPLETED_SQL}), 0)::float8 AS sum_sq_ms,
+  (percentile_disc(0.95) WITHIN GROUP (ORDER BY total_ms) FILTER (WHERE ${COMPLETED_SQL}))::float8 AS p95_ms`;
 
 export interface StatsRow {
   discarded: number;

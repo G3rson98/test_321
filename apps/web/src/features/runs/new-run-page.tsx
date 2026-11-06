@@ -33,6 +33,7 @@ import { reasonLabel } from '@/lib/labels';
 import { selection } from '@/lib/stores/selection';
 import { newIdempotencyKey, plural } from '@/lib/utils';
 import { CasePicker } from '@/features/suites/suite-form-page';
+import { TestRailTargetPicker, type TargetValue } from './testrail-target';
 import { useCaseAutomation, useCasesByIds, useKnownTags } from '@/features/common/derived';
 
 const route = getRouteApi('/_app/ejecuciones/nueva');
@@ -46,12 +47,22 @@ interface Values {
   environmentId: string | null;
   retries: number;
   excludeFlaky: boolean;
-  publish: boolean;
+  /** Destino en TestRail (RF-TR-06): corrida nueva, existente (`trRunId`) o ninguno. */
+  target: TargetValue;
+}
+
+/** Destino de TestRail del cuerpo; `null` si falta elegir la corrida existente. */
+function testrailOf(t: TargetValue) {
+  if (t.mode === 'ninguno') return { mode: 'ninguno' as const };
+  if (t.mode === 'nueva') return { mode: 'nueva' as const };
+  return t.trRunId === null ? null : { mode: 'existente' as const, trRunId: t.trRunId, closeExistingRun: t.closeExistingRun };
 }
 
 export function buildRunBody(v: Values): RunPreviewRequest | null {
   if (!v.environmentId) return null;
-  const base = { environmentId: v.environmentId, retries: v.retries, excludeFlaky: v.excludeFlaky, testrail: v.publish ? { mode: 'nueva' as const } : { mode: 'ninguno' as const } };
+  const testrail = testrailOf(v.target);
+  if (!testrail) return null;
+  const base = { environmentId: v.environmentId, retries: v.retries, excludeFlaky: v.excludeFlaky, testrail };
   if (v.mode === 'suite') return v.suiteId ? { ...base, suiteId: v.suiteId } : null;
   if (v.mode === 'casos') return v.caseIds.length ? { ...base, caseIds: v.caseIds } : null;
   return v.tags.length ? { ...base, tags: v.tags } : null;
@@ -87,7 +98,7 @@ export function NewRunPage() {
       environmentId: null as string | null,
       retries: 0,
       excludeFlaky: false,
-      publish: true,
+      target: { mode: 'nueva', trRunId: null, closeExistingRun: false } as TargetValue,
     } as Values,
   });
 
@@ -119,7 +130,7 @@ export function NewRunPage() {
   const debouncedBody = useDebouncedValue(body, 300);
   const bodyKey = JSON.stringify(body);
   // Idempotency-Key estable por intento: cambia solo si cambia lo que se va a ejecutar.
-  const idemKey = useMemo(() => newIdempotencyKey(), [bodyKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const idemKey = useMemo(() => newIdempotencyKey(), [bodyKey]);
 
   const preview = useQuery({
     queryKey: qk.runs.preview(debouncedBody),
@@ -263,8 +274,8 @@ export function NewRunPage() {
                         items={envList.map((e) => ({
                           value: e.id,
                           title: e.name,
-                          // `appUrl` solo llega en el detalle (admin); PENDIENTE [WEB→API-A] exponerlo en el resumen.
-                          description: 'appUrl' in e ? <span className="font-mono text-[12.5px]">{e.appUrl}</span> : <span className="text-[12.5px]">{e.isProduction ? 'Producción' : 'No productivo'}</span>,
+                          // `appUrl` llega también en el resumen para qa (D-054); sin ella se rotula el tipo de ambiente.
+                          description: e.appUrl ? <span className="font-mono text-[12.5px]">{e.appUrl}</span> : <span className="text-[12.5px]">{e.isProduction ? 'Producción' : 'No productivo'}</span>,
                           badge: e.isProduction ? <span className="rounded-sm bg-failed-bg px-2 py-0.5 text-[12.5px] font-medium text-failed">Solo lectura</span> : undefined,
                         }))}
                       />
@@ -291,13 +302,7 @@ export function NewRunPage() {
                     </label>
                   )}
                 </form.Field>
-                <form.Field name="publish">
-                  {(f) => (
-                    <label className="flex items-center gap-2.5 text-[15px]">
-                      <Checkbox checked={f.state.value} onCheckedChange={(v) => f.handleChange(v === true)} /> Publicar resultados en TestRail
-                    </label>
-                  )}
-                </form.Field>
+                <form.Field name="target">{(f) => <TestRailTargetPicker value={f.state.value} onChange={f.handleChange} />}</form.Field>
               </div>
             </div>
           </CardSection>
@@ -412,7 +417,7 @@ function PlanPanel({
     <aside className="h-fit xl:sticky xl:top-24" aria-label="Plan resuelto">
       <CardSection title="Plan resuelto" meta={stale && plan ? 'Actualizando plan…' : undefined}>
         {!body ? (
-          <p className="text-[14px] text-muted-foreground">Elige qué ejecutar y el ambiente para ver el plan.</p>
+          <p className="text-[14px] text-muted-foreground">Elige qué ejecutar, el ambiente y el destino en TestRail para ver el plan.</p>
         ) : loading ? (
           <div className="space-y-3">
             {[0, 1, 2, 3].map((i) => (

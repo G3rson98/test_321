@@ -84,6 +84,7 @@ export function toEnvironmentSummaryDto(e: Environment) {
     isProduction: e.isProduction,
     enabled: e.enabled && !e.disabledAt,
     recordingAllowed: e.recordingAllowed && !e.isProduction,
+    appUrl: e.appUrl,
   };
 }
 

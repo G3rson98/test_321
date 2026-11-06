@@ -4,8 +4,12 @@
  * servidor por cursor (25 por defecto, máx. 100) sin N+1: la página se enriquece con 2 consultas agregadas.
  */
 import type { Prisma, PrismaClient, TestRailCase } from '@prisma/client';
-import { CASE_RESULT_STATUSES, KatalystError, type Page } from '@katalyst/shared';
+import { CASE_RESULT_STATUSES, KatalystError, type Classification, type Page } from '@katalyst/shared';
+import { isFlakyRow } from '../catalog/service.js';
 import { decodePageCursor, keysetOrderBy, keysetWhere, paginate, parseSort } from '../../lib/pagination.js';
+
+/** Valor del filtro `lastResult` para casos que nunca tuvieron un resultado local. */
+export const SIN_EJECUTAR = 'sin_ejecutar';
 
 export const CASE_SORTS = {
   title: 'string',
@@ -23,7 +27,10 @@ export interface CaseListFilters {
   q?: string | undefined;
   automated?: boolean | undefined;
   includeArchived: boolean;
+  /** Estado del último resultado o `SIN_EJECUTAR` (casos sin ningún `case_result`). */
   lastResult?: string | undefined;
+  /** Selección por ID (máx. 100): se combina (AND) con el resto de filtros. */
+  ids?: string[] | undefined;
   /** Casos vinculados a tests con alguna de estas etiquetas (OR). */
   tags?: string[] | undefined;
 }
@@ -71,7 +78,10 @@ export async function buildCaseWhere(prisma: PrismaClient, f: CaseListFilters): 
   if (f.automated === true) and.push({ links: { some: approvedLink } });
   if (f.automated === false) and.push({ links: { none: approvedLink } });
   if (f.tags && f.tags.length > 0) and.push({ links: { some: { automatedTest: { tags: { hasSome: f.tags } } } } });
-  if (f.lastResult) {
+  if (f.ids) and.push({ id: { in: f.ids } });
+  if (f.lastResult === SIN_EJECUTAR) {
+    and.push({ caseResults: { none: {} } });
+  } else if (f.lastResult) {
     if (!(CASE_RESULT_STATUSES as readonly string[]).includes(f.lastResult)) {
       throw new KatalystError('VALIDATION_FAILED', 'Estado de último resultado desconocido.');
     }
@@ -80,24 +90,67 @@ export async function buildCaseWhere(prisma: PrismaClient, f: CaseListFilters): 
   return { AND: and };
 }
 
+/** Peor inestabilidad entre los tests vinculados (misma forma que `AutomatedTest.flaky`). */
+export interface CaseFlaky {
+  score: number | null;
+  numerator: number;
+  denominator: number;
+  isFlaky: boolean;
+  environmentId: null;
+}
+
 export interface CaseEnrichment {
   automatedTestCount: number;
   linksRequiringReview: number;
+  tags: string[];
+  classification: Classification | null;
+  flaky: CaseFlaky | null;
   lastResult: { status: string; runId: string; finishedAt: string | null } | null;
 }
 
+/** Más alto = más restrictivo: escritura > sin_clasificar > lectura. */
+const CLASSIFICATION_RANK: Record<Classification, number> = { lectura: 0, sin_clasificar: 1, escritura: 2 };
+
 export async function enrichCases(prisma: PrismaClient, ids: string[]): Promise<Map<string, CaseEnrichment>> {
-  const out = new Map<string, CaseEnrichment>(ids.map((id) => [id, { automatedTestCount: 0, linksRequiringReview: 0, lastResult: null }]));
+  const out = new Map<string, CaseEnrichment>(
+    ids.map((id): [string, CaseEnrichment] => [
+      id,
+      { automatedTestCount: 0, linksRequiringReview: 0, tags: [], classification: null, flaky: null, lastResult: null },
+    ]),
+  );
   if (ids.length === 0) return out;
   const links = await prisma.testCaseLink.findMany({
     where: { caseId: { in: ids }, automatedTest: { status: { not: 'retirado' } } },
-    select: { caseId: true, reviewStatus: true, automatedTest: { select: { status: true } } },
+    select: {
+      caseId: true,
+      reviewStatus: true,
+      automatedTest: {
+        select: { status: true, tags: true, classification: true, flakyScore: true, flakyNumerator: true, flakyDenominator: true },
+      },
+    },
   });
+  const tagSets = new Map<string, Set<string>>();
   for (const l of links) {
     const e = out.get(l.caseId)!;
-    if (l.automatedTest.status === 'aprobado') e.automatedTestCount++;
+    const t = l.automatedTest;
+    if (t.status === 'aprobado') e.automatedTestCount++;
     if (l.reviewStatus === 'requiere_revision') e.linksRequiringReview++;
+    // Agregado de los tests vigentes (no retirados): etiquetas (unión), clasificación más restrictiva y peor flaky.
+    const set = tagSets.get(l.caseId) ?? new Set<string>();
+    for (const tag of t.tags) set.add(tag);
+    tagSets.set(l.caseId, set);
+    const cls = t.classification as Classification;
+    if (e.classification === null || CLASSIFICATION_RANK[cls] > CLASSIFICATION_RANK[e.classification]) e.classification = cls;
+    const f: CaseFlaky = {
+      score: t.flakyScore,
+      numerator: t.flakyNumerator,
+      denominator: t.flakyDenominator,
+      isFlaky: isFlakyRow(t),
+      environmentId: null,
+    };
+    if (e.flaky === null || (f.score ?? -1) > (e.flaky.score ?? -1)) e.flaky = f;
   }
+  for (const [caseId, set] of tagSets) out.get(caseId)!.tags = [...set].sort();
   const last = await prisma.$queryRaw<{ case_id: string; status: string; run_id: string; finished_at: Date | null }[]>`
     SELECT DISTINCT ON (cr."case_id") cr."case_id"::text AS "case_id", cr."status"::text AS "status",
            cr."run_id"::text AS "run_id", r."finished_at" AS "finished_at"
@@ -128,6 +181,9 @@ export function toCaseSummary(c: TestRailCase, e: CaseEnrichment) {
     automatedTestCount: e.automatedTestCount,
     linksRequiringReview: e.linksRequiringReview,
     lastResult: e.lastResult,
+    tags: e.tags,
+    classification: e.classification,
+    flaky: e.flaky,
   };
 }
 

@@ -8,9 +8,10 @@ import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEMO_PASSWORD, DEMO_USERS } from '@/mocks/fixtures';
 import { installFetch, loginAs, renderApp, server } from './app-harness';
+import type * as SseManagerModule from '@/lib/sse/manager';
 
 vi.mock('@/lib/sse/manager', async (orig) => {
-  const mod = await orig<typeof import('@/lib/sse/manager')>();
+  const mod = await orig<typeof SseManagerModule>();
   return { ...mod, startSse: () => ({ stop: () => undefined }) };
 });
 

@@ -22,7 +22,7 @@ import { formatDateTimeShort, formatLongDate, formatPercent, formatSeconds, form
 import { firstName } from '@/lib/utils';
 import { usePollingFallback } from '@/lib/sse/polling';
 import { RunCounts, RunIdLink, RunOrigin, RunState } from '@/features/runs/run-cells';
-import { formatCount, useCoverage, useRunCounts, useSuccessRates, useUpcoming } from './home-data';
+import { useCoverage, useHomeSummary } from './home-data';
 
 const columns: ColumnDef<RunSummary>[] = [
   { id: 'id', header: 'ID', cell: ({ row }) => <RunIdLink run={row.original} /> },
@@ -39,10 +39,8 @@ export function HomePage() {
   const poll = usePollingFallback('list');
   const now = new Date();
 
-  const rates = useSuccessRates(poll);
-  const counts = useRunCounts(poll);
+  const summary = useHomeSummary(poll);
   const coverage = useCoverage();
-  const upcoming = useUpcoming();
   const recent = useQuery({
     queryKey: qk.runs.list({ limit: 5, sort: '-createdAt' }),
     queryFn: ({ signal }) => runsApi.list({ limit: 5, sort: '-createdAt' }, signal),
@@ -54,7 +52,7 @@ export function HomePage() {
   });
 
   const perfAlerts = (alerts.data?.items ?? []).filter((a) => a.kind === 'umbral_rendimiento');
-  const delta = rates.current !== null && rates.previous !== null ? Math.round((rates.current - rates.previous) * 100) : null;
+  const delta = summary.current !== null && summary.previous !== null ? Math.round((summary.current - summary.previous) * 100) : null;
   const firstAlert = perfAlerts[0];
   const p = firstAlert?.payload as { label?: string; value?: number; limit?: number; at?: string } | undefined;
 
@@ -75,16 +73,16 @@ export function HomePage() {
       <KpiGrid>
         <KpiCard
           label="Éxito 7 días"
-          loading={rates.isLoading}
-          tone={rates.current !== null ? 'passed' : 'default'}
-          value={rates.current !== null ? formatPercent(rates.current) : '—'}
-          hint={rates.isError ? 'No se pudo cargar' : delta !== null ? `${delta >= 0 ? '+' : ''}${delta} pts vs semana anterior` : rates.current === null ? 'sin datos en 7 días' : 'sin datos de la semana anterior'}
+          loading={summary.isLoading}
+          tone={summary.current !== null ? 'passed' : 'default'}
+          value={summary.current !== null ? formatPercent(summary.current) : '—'}
+          hint={summary.isError ? 'No se pudo cargar' : delta !== null ? `${delta >= 0 ? '+' : ''}${delta} pts vs semana anterior` : summary.current === null ? 'sin datos en 7 días' : 'sin datos de la semana anterior'}
         />
         <KpiCard
           label="Ejecuciones hoy"
-          loading={counts.isLoading}
-          value={counts.today ? formatCount(counts.today) : '—'}
-          hint={counts.isError ? 'No se pudo cargar' : counts.running ? `${formatCount(counts.running)} corriendo ahora` : ' '}
+          loading={summary.isLoading}
+          value={summary.today !== null ? summary.today : '—'}
+          hint={summary.isError ? 'No se pudo cargar' : summary.running ? `${summary.running} corriendo ahora` : ' '}
           href="/ejecuciones"
         />
         <KpiCard
@@ -157,15 +155,15 @@ export function HomePage() {
             </Link>
           }
         >
-          {upcoming.isLoading ? (
+          {summary.isLoading ? (
             <div className="space-y-4 p-5">
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
-          ) : upcoming.isError ? (
-            <ErrorState error={upcoming.error} onRetry={() => void upcoming.refetch()} compact />
-          ) : upcoming.items.length === 0 ? (
+          ) : summary.isError ? (
+            <ErrorState error={summary.error} onRetry={() => void summary.refetch()} compact />
+          ) : summary.upcoming.length === 0 ? (
             <EmptyState
               title="No hay programaciones activas"
               action={
@@ -176,7 +174,7 @@ export function HomePage() {
             />
           ) : (
             <ul>
-              {upcoming.items.map((u) => (
+              {summary.upcoming.map((u) => (
                 <li key={`${u.scheduleId}-${u.at}`} className="border-b border-border last:border-0">
                   <Link
                     to="/programaciones/$scheduleId"

@@ -8,6 +8,7 @@
  * `bootstrap-admin -- --service-credential supervisor:host-1 [--days 30]` imprime el token UNA vez en stdout.
  */
 import { readFile } from 'node:fs/promises';
+import type { PrismaClient } from '@prisma/client';
 import { EmailSchema } from '@katalyst/shared';
 import { loadConfig } from '../config.js';
 import { createPrisma } from '../db.js';
@@ -90,7 +91,7 @@ export async function resolvePassword(
 }
 
 export async function bootstrapAdmin(
-  prisma: import('@prisma/client').PrismaClient,
+  prisma: PrismaClient,
   o: { email: string; name: string; password: string; resetPassword: boolean },
 ): Promise<{ action: 'created' | 'password_reset' | 'unchanged'; userId: string }> {
   const email = EmailSchema.parse(o.email);

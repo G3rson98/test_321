@@ -50,6 +50,8 @@ export const EnvironmentSummarySchema = z.object({
   isProduction: z.boolean(),
   enabled: z.boolean(),
   recordingAllowed: z.boolean(),
+  /** WEB→API-A: URL de la aplicación (visible para qa en la selección de ambiente). */
+  appUrl: HttpUrlSchema.optional(),
 });
 export type EnvironmentSummary = z.infer<typeof EnvironmentSummarySchema>;
 

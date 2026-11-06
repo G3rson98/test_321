@@ -210,16 +210,26 @@ Fuente de verdad en código: `apps/api/src/control/dispatcher.ts`, `src/services
   referencia en `apps/runner/test/fixtures/pw-project/fixtures/test.ts`). Sin ella el test puede interactuar con la app
   antes de que la API persista el inicio del intento.
 
-- [WEB→API-A] (D-052; el panel hoy deriva o degrada) Resumen de caso en `GET /testrail/cases` con `tags`, `flaky` y
-  `classification` (hoy: una llamada `/tests?caseId=` por fila automatizada); filtro `ids` en `GET /testrail/cases`
-  (selección masiva entre páginas; hoy `/testrail/cases/:id` por id); `GET /tests/:id/source` para el visor de código
-  del caso (hoy fragmento con metadatos del manifiesto); `appUrl` en el resumen de ambientes para rol qa; valor
-  `sin_ejecutar` en el filtro `lastResult`.
-- [WEB→API-B] Endpoint de resumen del inicio (éxito 7 días, corridas de hoy, en curso, próximas programaciones): hoy se
-  derivan de `/runs` y `/schedules` con tope de 100 ("100+"). Etiqueta legible de la selección en el resumen de corrida.
-- [WEB→API-C] `GET /perf`: p95 del período completo por serie (hoy "peor p95 por intervalo", rotulado así) y bytes
-  por serie (columnas "En red/Descomprimido" de la captura 19 omitidas). Reglas globales de notificación si el equipo
-  las quiere: hoy "Avisar cuando" (captura 25) edita las preferencias propias del admin (RF-NOT-03).
+- [RESUELTO 2026-11-06 (D-054)] [WEB→API-A] Resumen de caso en `GET /testrail/cases` con `tags`, `flaky` y `classification`
+  (agregados de los tests vinculados no retirados; el panel ya no llama `/tests?caseId=` por fila); filtro `ids`
+  (repetible, ≤ 100) en `GET /testrail/cases` (el panel resuelve la selección en una sola consulta); `appUrl` en el
+  resumen de ambientes para qa (sin `apiUrl`, política ni hosts); valor `sin_ejecutar` en el filtro `lastResult`
+  (casos sin ningún `case_result`). Queda aparte `[WEB→API-A2]`.
+- [WEB→API-A2] `GET /tests/:id/source` (código sanitizado del commit aprobado para el visor del caso): ABIERTO. La API no
+  persiste el código fuente de los tests (el catálogo solo guarda metadatos del manifiesto y el listado corre aislado en
+  el runner). Requiere decidir dónde se obtiene el código (ingesta del refresco con sanitización por la ruta de
+  `packages/shared/src/sanitize`, o lectura del repositorio en el runner bajo demanda) y su control de acceso
+  (`catalog.read`). Mientras tanto el visor muestra el fragmento con metadatos del manifiesto.
+- [RESUELTO 2026-11-06 (D-054)] [WEB→API-B] `GET /runs/summary` (`runs.read`): éxito de 7 días frente a los 7 anteriores,
+  corridas de hoy (`todayFrom` del cliente), corridas activas y próximas 3 programaciones (solo con `schedules.read`),
+  sin la cota de 100. `RunSummary.selectionLabel` ("N casos", "Etiquetas …", "Suite X") para el título de corridas por
+  selección.
+- [RESUELTO 2026-11-06 (D-054)] [WEB→API-C] `GET /perf`: cada serie trae `summary` (`p95Ms`/`p95Status` del período
+  completo sobre muestras crudas, `completed`, `avgBytesWire` y `avgBytesBody`); fuera de la retención de crudos el p95 es
+  `no_disponible` y los bytes `null`. El panel muestra el p95 del período y las columnas «En red»/«Descomprimido».
+- [WEB→API-C2] Reglas globales de notificación («Avisar cuando», captura 25): ABIERTO, decisión de producto. Hoy la pantalla
+  edita las preferencias propias del admin (RF-NOT-03). Una regla global (umbral/fallo → canal) implicaría nuevo
+  modelo, permiso `notifications.rules.manage` y su auditoría.
 
 ## De la base (packages/shared, apps/api esqueleto) — 2026-11-06
 - `@katalyst/shared` resuelve código fuente con la condición `source` (`tsx --conditions=source`, Vite/Vitest

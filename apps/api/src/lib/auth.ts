@@ -17,6 +17,7 @@
  * que un callback repetido reciba su acuse original (ESP §13.3); los handlers del worker DEBEN validar vigencia y
  * generación (LEASE_STALE / LEASE_EXPIRED).
  */
+import type { PrismaClient } from '@prisma/client';
 import type {
   FastifyPluginAsync,
   FastifyReply,
@@ -194,7 +195,7 @@ export { ROUTES };
 // ---------------------------------------------------------------------------
 
 interface ResolveDeps {
-  prisma: import('@prisma/client').PrismaClient;
+  prisma: PrismaClient;
   now?: () => Date;
 }
 

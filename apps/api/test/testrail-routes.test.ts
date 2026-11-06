@@ -159,6 +159,47 @@ describe('sync y catálogo de casos (RF-TR-02/03, RF-CAT-02)', () => {
     expect(auto.json().items[0]).toMatchObject({ automated: true, automatedTestCount: 1, linksRequiringReview: 1, ref: `C${c1!.trCaseId}` });
     const manual = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?suiteId=${suiteB}&automated=false`, headers: qa });
     expect(manual.json().items.map((i: { id: string }) => i.id)).toEqual([c2!.id]);
+    // WEB→API-A: resumen con tags/classification/flaky agregados (sin consultar /tests por fila).
+    expect(auto.json().items[0]).toMatchObject({ tags: [uniqueTag], classification: 'lectura', flaky: { score: null, numerator: 0, denominator: 0, isFlaky: false, environmentId: null } });
+    expect(manual.json().items[0]).toMatchObject({ tags: [], classification: null, flaky: null });
+    const t2 = await ctx.prisma.automatedTest.create({
+      data: {
+        stableKey: randomUUID(),
+        filePath: 'tests/agendamiento/b.spec.ts',
+        title: `C${c1!.trCaseId} escritura`,
+        tags: ['@aa-zz', uniqueTag],
+        classification: 'escritura',
+        status: 'aprobado',
+        flakyScore: 0.4,
+        flakyNumerator: 4,
+        flakyDenominator: 10,
+      },
+    });
+    const gone = await ctx.prisma.automatedTest.create({
+      data: { stableKey: randomUUID(), filePath: 'tests/x/retirado.spec.ts', title: 'retirado', tags: ['@retirado'], classification: 'escritura', status: 'retirado', flakyScore: 0.9, flakyNumerator: 9, flakyDenominator: 10 },
+    });
+    await ctx.prisma.testCaseLink.create({ data: { automatedTestId: t2.id, caseId: c1!.id, reviewStatus: 'vigente', reviewedCaseRevision: 1 } });
+    await ctx.prisma.testCaseLink.create({ data: { automatedTestId: gone.id, caseId: c1!.id, reviewStatus: 'vigente', reviewedCaseRevision: 1 } });
+    const agg = (await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases/${c1!.id}`, headers: qa })).json();
+    expect(agg).toMatchObject({
+      automatedTestCount: 2,
+      tags: [uniqueTag, '@aa-zz'].sort(),
+      classification: 'escritura',
+      flaky: { score: 0.4, numerator: 4, denominator: 10, isFlaky: true },
+    });
+    expect(agg.tags).not.toContain('@retirado');
+    await ctx.prisma.testCaseLink.deleteMany({ where: { automatedTestId: { in: [t2.id, gone.id] } } });
+    // WEB→API-A: filtro `ids` (repetible, máx. 100) combinado con los demás filtros.
+    const byIds = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?ids=${c1!.id}&ids=${c2!.id}&limit=100`, headers: qa });
+    expect(byIds.json().items.map((i: { id: string }) => i.id).sort()).toEqual([c1!.id, c2!.id].sort());
+    const oneId = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?ids=${c2!.id}`, headers: qa });
+    expect(oneId.json().items.map((i: { id: string }) => i.id)).toEqual([c2!.id]);
+    const idsAnd = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?ids=${c1!.id}&ids=${c2!.id}&automated=true`, headers: qa });
+    expect(idsAnd.json().items.map((i: { id: string }) => i.id)).toEqual([c1!.id]);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?ids=no-es-uuid`, headers: qa })).statusCode).toBe(422);
+    // WEB→API-A: `sin_ejecutar` = casos sin ningún resultado local (c1 no tiene; c2 tendrá uno fallido).
+    const never = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?suiteId=${suiteB}&lastResult=sin_ejecutar`, headers: qa });
+    expect(never.json().items.map((i: { id: string }) => i.id)).toEqual([c1!.id, c2!.id]);
     const tag = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?tag=${encodeURIComponent(uniqueTag)}`, headers: qa });
     expect(tag.json().items.map((i: { id: string }) => i.id)).toEqual([c1!.id]);
     const env = await ctx.prisma.environment.create({ data: { name: `h-${randomUUID().slice(0, 6)}`, appUrl: 'https://a.example.test', apiUrl: 'https://b.example.test', isProduction: false, allowedHosts: [] } });
@@ -169,6 +210,8 @@ describe('sync y catálogo de casos (RF-TR-02/03, RF-CAT-02)', () => {
     const lr = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?suiteId=${suiteB}&lastResult=fallido`, headers: qa });
     expect(lr.json().items.map((i: { id: string }) => i.id)).toEqual([c2!.id]);
     expect(lr.json().items[0].lastResult).toMatchObject({ status: 'fallido', runId: run.id });
+    const neverAfter = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?suiteId=${suiteB}&lastResult=sin_ejecutar`, headers: qa });
+    expect(neverAfter.json().items.map((i: { id: string }) => i.id)).toEqual([c1!.id]);
     expect((await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases?lastResult=raro`, headers: qa })).statusCode).toBe(422);
     const det = await ctx.app.inject({ method: 'GET', url: `/api/v1/testrail/cases/${c1!.id}`, headers: qa });
     expect(det.statusCode).toBe(200);

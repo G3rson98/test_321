@@ -102,6 +102,8 @@ export const envApi = {
 
 export const runsApi = {
   list: (q: Q, signal?: AbortSignal) => api.get<T.Page<T.RunSummary>>('/runs', q, signal),
+  /** KPIs del inicio calculados en servidor (`todayFrom` = inicio del día local, ISO). */
+  summary: (q: Q = {}, signal?: AbortSignal) => api.get<T.HomeSummary>('/runs/summary', q, signal),
   get: (id: string, signal?: AbortSignal) => api.get<T.RunDetail>(`/runs/${enc(id)}`, undefined, signal),
   results: (id: string, q: Q, signal?: AbortSignal) =>
     api.get<T.Page<T.RunResult>>(`/runs/${enc(id)}/results`, q, signal),
@@ -175,6 +177,11 @@ export const testrailApi = {
   saveConnection: (body: TestRailConnectionUpdate) => api.put<T.TestRailConnection>('/testrail/connection', body),
   testConnection: (body: TestRailConnectionTestRequest) =>
     api.post<T.TestRailConnectionTest>('/testrail/connection/test', body),
+  /** RF-TR-06 · Plan de TestRail existente (lectura en vivo; 404 si no existe, 502/503 si TestRail no responde). */
+  plan: (planId: number, signal?: AbortSignal) => api.get<T.TestRailPlan>(`/testrail/plans/${planId}`, undefined, signal),
+  /** RF-TR-06 · Tests de una corrida existente de TestRail (lectura en vivo). */
+  runTests: (trRunId: number, signal?: AbortSignal) =>
+    api.get<T.TestRailRunTests>(`/testrail/runs/${trRunId}/tests`, undefined, signal),
 };
 
 export const auditApi = {

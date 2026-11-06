@@ -25,6 +25,7 @@ import type {
   ExportDownloadResponseSchema,
   ExportJobSchema,
   FlakyInfoSchema,
+  HomeSummarySchema,
   GenerationDetailSchema,
   HistoryResponseSchema,
   MeResponseSchema,
@@ -56,6 +57,8 @@ import type {
   TestRailCaseSummarySchema,
   TestRailConnectionSchema,
   TestRailConnectionTestResponseSchema,
+  TestRailPlanSchema,
+  TestRailRunTestsSchema,
   TestRailSectionSchema,
   TestRailSyncRunSchema,
   TestUserSchema,
@@ -68,7 +71,10 @@ export type AuthProviders = z.infer<typeof AuthProvidersResponseSchema>;
 export type Section = z.infer<typeof TestRailSectionSchema>;
 export type FlakyInfo = z.infer<typeof FlakyInfoSchema>;
 
-/** Caso del catálogo (`GET /testrail/cases`). Etiquetas/flaky/clasificación se derivan de `GET /tests`. */
+/** Caso del catálogo (`GET /testrail/cases`), con etiquetas/clasificación/inestabilidad agregadas por la API (D-054). */
+/** RF-TR-06: plan y corrida existentes de TestRail leídos en vivo. */
+export type TestRailPlan = z.infer<typeof TestRailPlanSchema>;
+export type TestRailRunTests = z.infer<typeof TestRailRunTestsSchema>;
 export type CaseRow = z.infer<typeof TestRailCaseSummarySchema>;
 export type CaseDetail = z.infer<typeof TestRailCaseDetailSchema>;
 export type AutomatedTest = z.infer<typeof AutomatedTestSchema>;
@@ -83,6 +89,7 @@ export type EnvironmentListItem = Environment | EnvironmentSummary;
 export type TestUser = z.infer<typeof TestUserSchema>;
 
 export type RunSummary = z.infer<typeof RunSummarySchema>;
+export type HomeSummary = z.infer<typeof HomeSummarySchema>;
 export type RunDetail = z.infer<typeof RunDetailSchema>;
 export type RunPreview = z.infer<typeof RunPreviewResponseSchema>;
 export type RunResult = z.infer<typeof RunResultSchema>;

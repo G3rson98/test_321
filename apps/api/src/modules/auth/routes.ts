@@ -8,7 +8,7 @@
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import type { ApiCredential } from '@prisma/client';
+import type { ApiCredential, PrismaClient } from '@prisma/client';
 import {
   ApiTokenCreateRequestSchema,
   ApiTokenCreatedResponseSchema,
@@ -594,7 +594,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
 /** Emite credencial de servicio (API y CLI comparten esta función). Token devuelto una sola vez. */
 export async function issueServiceCredential(
-  prisma: import('@prisma/client').PrismaClient,
+  prisma: PrismaClient,
   o: { serviceName: string; scopes: string[]; expiresAt: Date; actor: Principal | 'system'; requestId?: string },
 ): Promise<{ credential: ApiCredential; token: string }> {
   if (o.scopes.some((s) => s !== 'worker.claim')) throw new KatalystError('FORBIDDEN', 'Scope no admitido para servicio.');

@@ -4,7 +4,7 @@
  * RF-PRG-01, RF-PRG-02, RF-PRG-03, RF-PRG-04, RF-PRG-05.
  */
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { z } from 'zod';
+import type { z } from 'zod';
 import {
   ExclusionWindowCreateSchema,
   ExclusionWindowListQuerySchema,

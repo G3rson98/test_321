@@ -244,6 +244,26 @@ describe('SseManager', () => {
     expect(conns).toHaveLength(1);
   });
 
+  it('403 detiene el canal sin reintentos, avisa «sin permiso» y deja el polling de respaldo (no llama a onUnauthorized)', async () => {
+    nextStatus = [403];
+    const onUnauthorized = vi.fn();
+    const onForbidden = vi.fn();
+    make({ onUnauthorized, onForbidden }).start();
+    await tick();
+    expect(onForbidden).toHaveBeenCalledTimes(1);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(sseStore.state.status).toBe('forbidden');
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(conns).toHaveLength(1); // ni backoff ni reconexión por visibilidad
+    // Sin canal en vivo, las listas se refrescan por polling de respaldo (no se quedan congeladas).
+    expect(fallbackInterval(sseStore.state, 'list')).toBe(30_000);
+    expect(fallbackInterval(sseStore.state, 'detail')).toBe(5_000);
+    vis.set(true);
+    vis.set(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(conns).toHaveLength(1);
+  });
+
   it('pestaña oculta suspende el canal; al volver reconecta con Last-Event-ID y reconcilia', async () => {
     const spy = vi.spyOn(qc, 'invalidateQueries');
     make().start();

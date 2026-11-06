@@ -676,3 +676,41 @@ número libre.
   sintéticos de pruebas, `stableKey` UUID y el mock MSW del panel (docs/aceptacion/seguridad.md §1).
 - **Stack local y ensayos** (`scripts/`): `dev-stack.sh`, `fake-testrail.mjs`, `fake-deltax.mjs`, `seed-dev.ts`,
   `e2e-local.ts`, `aceptacion-canarios.ts`, `load/*`, `backup-restore-local.sh`; resultados en `docs/aceptacion/`.
+
+## D-054 — Pendientes WEB→API resueltos, SSE 401/403, RF-TR-06 en el panel y lint limpio
+2026-11-06 · INTEGRACIÓN
+- **WEB→API-A (solo se añaden campos/filtros opcionales, nada se rompe):** `TestRailCaseSummary` incluye `tags` (unión),
+  `classification` (la más restrictiva: escritura > sin_clasificar > lectura) y `flaky` (el peor `FlakyInfo`) de los
+  tests vinculados NO retirados, calculados en `enrichCases` con la misma consulta de vínculos (sin consultas extra);
+  `GET /testrail/cases?ids=` (UUID repetible, ≤ 100, combinable con los demás filtros); `lastResult=sin_ejecutar` (casos
+  sin ningún `case_result`; `pendiente`/`no_ejecutado` siguen filtrándose por su propio valor). `EnvironmentSummary.appUrl`
+  (qa): ya es visible para qa en el snapshot de la corrida (`runs.read`), así que no amplía la exposición; `apiUrl`,
+  política de artefactos y hosts siguen siendo solo admin. El panel dejó de consultar `/tests?caseId=` por fila y
+  resuelve selecciones con una sola consulta `ids`.
+- **WEB→API-B:** `GET /runs/summary` (módulo runs, `runs.read`, en `ROUTES`): `groupBy` de `outcome` para éxito 7 días vs.
+  los 7 anteriores (corridas `terminada` con resultado, creadas en la ventana), `runsToday` desde `todayFrom` (inicio de
+  día local que envía el cliente; por defecto 00:00 UTC), `running` (estados activos) y las 3 próximas programaciones
+  habilitadas con su ambiente (solo con `schedules.read`). `RunSummary.selectionLabel` se arma del snapshot ("N casos",
+  "Etiquetas @a, @b", "Suite X"). La clave de caché del inicio cuelga de `dashboard`, que el SSE ya invalida.
+- **WEB→API-C:** `GET /perf` añade `series[].summary` con p95 del PERÍODO sobre muestras crudas (`percentile_disc(0.95)`,
+  mismo mínimo de 20 completadas), `completed` y promedios de `bytes_wire`/`bytes_body`; si el período empieza antes de la
+  retención de crudos, `p95Status: no_disponible` y bytes `null` (los agregados horarios no los conservan). El panel
+  quita «peor p95 por intervalo» y agrega las columnas «En red» y «Descomprimido».
+- **Abiertos (documentados como `[WEB→API-A2]` y `[WEB→API-C2]`):** `GET /tests/:id/source` (la API no persiste código
+  fuente; requiere decidir ingesta sanitizada vs. lectura bajo demanda) y reglas globales de notificación (decisión de
+  producto: nuevo modelo y permiso).
+- **SSE 401/403:** el gestor deja de reintentar ante ambos. 401 → `onUnauthorized` (redirige al ingreso, sin cambios);
+  403 → estado `forbidden`, aviso «Sin permiso para recibir actualizaciones en vivo» y NO reconexión (ni por backoff ni
+  al volver la pestaña). En `forbidden` las listas se refrescan por el polling de respaldo (`fallbackInterval`), para
+  que no queden congeladas sin canal en vivo.
+- **RF-TR-06 en el panel:** la API ya exponía `GET /testrail/plans/:planId` y `GET /testrail/runs/:trRunId/tests`
+  (`testrail.read`, qa); no se añadieron rutas. «Nueva ejecución» reemplaza la casilla «Publicar en TestRail» por el destino
+  «Corrida nueva | Plan o corrida existente | No publicar». En «existente» se busca un Test Plan por ID y se elige una de
+  sus corridas abiertas (las cerradas aparecen deshabilitadas) o se verifica una corrida por ID; `closeExistingRun`
+  queda desactivado por defecto con aviso de irreversibilidad (ESP §8). El cuerpo de `POST /runs/preview` y `POST /runs`
+  lleva `testrail: {mode:'existente', trRunId, closeExistingRun}`; sin corrida elegida no hay vista previa.
+- **Lint:** `pnpm lint` queda en 0 errores y 0 advertencias sin cambiar comportamiento: `import type` en lugar de
+  `import()` de tipos, sentencia `if/else` en lugar de ternario con efectos, importaciones y `any` sin uso/explícitos
+  (tipos mínimos o `eslint-disable-next-line` justificado en dobles de prueba de forma libre), directivas
+  `react-hooks/exhaustive-deps` eliminadas (el plugin no está configurado; se conservó el motivo como comentario),
+  `no-console` desactivado solo en `**/scripts/**` (CLI), `/* global */` en `apps/web/scripts/size.mjs`.

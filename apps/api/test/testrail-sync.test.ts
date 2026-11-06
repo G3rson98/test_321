@@ -3,7 +3,7 @@
  * árbol de secciones, cambio de caso (pasos → nueva revisión + requiere_revision; título/refs → solo metadatos),
  * archivado solo tras sync completa, fallo parcial sin cambios, campos no soportados, concurrencia.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { KatalystError } from '@katalyst/shared';
 import { createPrisma } from '../src/db.js';

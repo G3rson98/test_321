@@ -3,7 +3,8 @@
  * RF-TR-01, RF-TR-02, RF-TR-03, RF-TR-06, RF-TR-07, RF-TR-08.
  */
 import { z } from 'zod';
-import { LinkReviewStatusSchema, SyncRunStatusSchema } from '../enums.js';
+import { ClassificationSchema, LinkReviewStatusSchema, SyncRunStatusSchema } from '../enums.js';
+import { FlakyInfoSchema } from './catalog.js';
 import {
   CaseRefSchema,
   CursorQuerySchema,
@@ -12,6 +13,7 @@ import {
   SecretRefSchema,
   Sha256HexSchema,
   sortQuerySchema,
+  TagSchema,
   UuidSchema,
   VersionSchema,
 } from './common.js';
@@ -135,6 +137,12 @@ export const TestRailCaseSummarySchema = z.object({
   automatedTestCount: z.number().int().nonnegative(),
   linksRequiringReview: z.number().int().nonnegative(),
   lastResult: z.object({ status: z.string(), runId: UuidSchema, finishedAt: IsoDateTimeSchema.nullable() }).nullable(),
+  /** WEB→API-A: etiquetas (unión) de los tests vigentes vinculados; evita una consulta `/tests?caseId=` por fila. */
+  tags: z.array(TagSchema).optional(),
+  /** WEB→API-A: clasificación más restrictiva de los tests vinculados (`null` si no hay ninguno). */
+  classification: ClassificationSchema.nullable().optional(),
+  /** WEB→API-A: peor inestabilidad entre los tests vinculados (`null` si no hay ninguno). */
+  flaky: FlakyInfoSchema.nullable().optional(),
 });
 export type TestRailCaseSummary = z.infer<typeof TestRailCaseSummarySchema>;
 
@@ -170,7 +178,10 @@ export const TestRailCaseListQuerySchema = CursorQuerySchema.extend({
     .transform((v) => v === 'true')
     .optional(),
   includeArchived: z.coerce.boolean().default(false),
+  /** Estado del último `case_result` o `sin_ejecutar` (casos sin ningún resultado). */
   lastResult: z.string().max(32).optional(),
+  /** WEB→API-A: resuelve una selección por ID (máx. 100); se combina con el resto de filtros. Repetible. */
+  ids: z.union([UuidSchema, z.array(UuidSchema).max(100)]).optional(),
   sort: sortQuerySchema(['title', 'trCaseId', 'syncedAt'] as const, 'title'),
 });
 export type TestRailCaseListQuery = z.infer<typeof TestRailCaseListQuerySchema>;

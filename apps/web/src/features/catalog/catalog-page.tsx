@@ -86,7 +86,7 @@ export function CatalogPage() {
 
   useEffect(() => {
     if ((debouncedQ || undefined) !== search.q) applyFilter({ q: debouncedQ.trim() || undefined }, selectedIds.size === 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Solo reacciona al texto con debounce; `applyFilter` y `search.q` se leen del render vigente.
   }, [debouncedQ]);
   useEffect(() => {
     selection.setScope(scopeKey);
@@ -215,6 +215,7 @@ export function CatalogPage() {
                 <SelectItem value="fallido">Fallido</SelectItem>
                 <SelectItem value="inestable">Inestable</SelectItem>
                 <SelectItem value="bloqueado">Bloqueado</SelectItem>
+                <SelectItem value="sin_ejecutar">Sin ejecutar</SelectItem>
               </SelectContent>
             </Select>
           </div>

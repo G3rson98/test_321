@@ -49,11 +49,13 @@ const SECRET_REF = 'env:KATALYST_SECRET__QA_INTEGRACION';
 // La API lee su configuración de process.env (antes de importar sus módulos).
 Object.assign(process.env, { DATABASE_URL, TEST_DATABASE_URL: DATABASE_URL, REDIS_URL, COOKIE_SECURE: 'false', QUEUE_PREFIX: PREFIX });
 
-/* Formas mínimas de los módulos de la API usados (import dinámico). */
+/* Formas mínimas de los módulos de la API usados (import dinámico): el JSON y los modelos son de forma libre. */
 interface Inject {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (o: { method: string; url: string; headers?: Record<string, string>; payload?: unknown }): Promise<{ statusCode: number; json(): any }>;
 }
 interface Prisma {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [model: string]: any;
   $disconnect(): Promise<void>;
 }
@@ -307,7 +309,7 @@ describe('RUNNER ↔ API real (PostgreSQL katalyst_test_runner + Redis 4 + Chrom
         return TERMINAL.has(r.status) ? r : null;
       }, 10_000, 'corrida terminal').catch(async (e) => {
         const st = await ctx.prisma.runResult.findMany({ where: { runId }, include: { attempts: true } });
-        throw new Error(`${(e as Error).message}: run=${JSON.stringify(await getRun(runId))} outcomes=${outcomes} results=${JSON.stringify(st.map((r: any) => [r.status, r.attempts.map((a: any) => a.status)]))}`);
+        throw new Error(`${(e as Error).message}: run=${JSON.stringify(await getRun(runId))} outcomes=${outcomes} results=${JSON.stringify(st.map((r: { status: string; attempts: { status: string }[] }) => [r.status, r.attempts.map((a) => a.status)]))}`);
       });
       expect(run).toMatchObject({ status: 'terminada', outcome: 'fallido' });
       expect(outcomes.at(-1)).toBe('completed');

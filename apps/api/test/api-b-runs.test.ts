@@ -494,6 +494,41 @@ describe('API de worker (RF-EJE-08, ESP §13.3)', () => {
     expect((await get(`/runs/${run.id}/targets`)).json().items[0]).toMatchObject({ syncStatus: 'pendiente', pendingDeliveries: 3 });
   });
 
+  it('WEB→API-B GET /runs/summary: éxito 7 días vs. previos, hoy, activas y próximas; etiqueta de selección', async () => {
+    const base = { trigger: 'manual' as const, environmentId: envId, selectionSnapshot: {}, manifestHash: 'c'.repeat(64), gitCommit: 'd'.repeat(40) };
+    const at = (days: number) => new Date(Date.now() - days * 86_400_000);
+    // Últimos 7 días: 3 pasado, 1 inestable, 1 fallido (+1 bloqueado) → 4/6; previos: 1 pasado + 1 fallido → 1/2.
+    for (const [outcome, days] of [['pasado', 1], ['pasado', 2], ['pasado', 3], ['inestable', 4], ['fallido', 5], ['bloqueado', 6], ['pasado', 9], ['fallido', 10], ['pasado', 20]] as const) {
+      await ctx.prisma.run.create({ data: { ...base, status: 'terminada', outcome, createdAt: at(days), finishedAt: at(days) } });
+    }
+    const sum0 = (await get('/runs/summary')).json();
+    expect(sum0.successRate).toMatchObject({ currentRuns: 6, previousRuns: 2 });
+    expect(sum0.successRate.current).toBeCloseTo(4 / 6, 10);
+    expect(sum0.successRate.previous).toBeCloseTo(0.5, 10);
+    expect(sum0).toMatchObject({ runsToday: 0, running: 0, upcoming: [] });
+    const { run } = await createRun({ caseIds: [seed.cases.D!.id], environmentId: envId });
+    const sBody = { name: 'Diaria', environmentId: envId, caseIds: [seed.cases.C!.id], cronExpressions: ['*/30 * * * *'], timezone: 'UTC', retries: 0, enabled: true, notify: { onFailure: true, onInterruption: true, channels: [] } };
+    const s = (await post('/schedules', sBody)).json();
+    expect(s.id).toBeDefined();
+    expect((await post('/schedules', { ...sBody, name: 'Pausada', enabled: false })).statusCode).toBe(201);
+    const sum = (await get('/runs/summary')).json();
+    expect(sum.runsToday).toBe(1);
+    expect(sum.running).toBe(1);
+    expect(sum.upcoming).toHaveLength(1); // la deshabilitada no cuenta
+    expect(sum.upcoming[0]).toMatchObject({ scheduleId: s.id, environmentId: envId, environmentName: expect.any(String) });
+    expect(new Date(sum.upcoming[0].at).getTime()).toBeGreaterThan(Date.now());
+    // `todayFrom` del cliente: un inicio de día en el futuro deja «hoy» en 0.
+    const later = (await get(`/runs/summary?todayFrom=${encodeURIComponent(new Date(Date.now() + 3_600_000).toISOString())}`)).json();
+    expect(later.runsToday).toBe(0);
+    // Etiqueta legible de la selección (WEB→API-B).
+    expect((await get(`/runs/${run.id}`)).json().selectionLabel).toBe('1 caso');
+    const tagRun = (await createRun({ tags: ['@oc', '@humo'], environmentId: envId })).run;
+    expect((await get(`/runs/${tagRun.id}`)).json().selectionLabel).toBe('Etiquetas @oc, @humo');
+    // /runs/summary no se confunde con /runs/:id y exige runs.read.
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/v1/runs/summary', headers: { authorization: ctx.service.authorization } })).statusCode).toBe(403);
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/v1/runs/summary' })).statusCode).toBe(401);
+  });
+
   it('RNF-SEG-03 worker: servicio no puede llamar callbacks; panel no puede reclamar', async () => {
     const { run, shard } = await (async () => {
       const { run } = await createRun({ caseIds: [seed.cases.D!.id], environmentId: envId });

@@ -54,6 +54,8 @@ export const test = base.extend<KatalystFixtures & KatalystOptions>({
     },
     { auto: true },
   ],
+  // Playwright exige el patrón de desestructuración (aunque vacío) para no inyectar fixtures.
+  // eslint-disable-next-line no-empty-pattern
   katalystEnv: async ({}, use) => {
     const env = readEnv();
     requireTarget(env);

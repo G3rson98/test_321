@@ -149,6 +149,7 @@ export const envSummary = (e: Environment) => ({
   isProduction: e.isProduction,
   enabled: e.enabled,
   recordingAllowed: e.recordingAllowed,
+  appUrl: e.appUrl,
 });
 
 export const testUsers: TestUser[] = [
@@ -394,7 +395,6 @@ export function resolveSelector(sel: { caseIds?: string[]; tags?: string[]; sect
 /** Resultado interno: `lastError` alimenta el error del intento (la API lo expone en `TestAttempt.error`). */
 export type MockRunResult = RunResult & { caseRefs: string[]; lastError: string | null };
 export interface MockRun extends RunDetail {
-  selectionLabel?: string | null;
   results: MockRunResult[];
   attempts: TestAttempt[];
   caseResults: CaseResult[];
@@ -617,7 +617,8 @@ export function makeRun(opts: {
     ],
     problems: { application: results.filter((r) => r.status === 'fallido').length, runner: 0, publication: 0 },
     evidenceIncomplete: false,
-    selectionLabel: opts.selectionLabel ?? (opts.suite ? null : opts.caseList.map((c) => c.ref).slice(0, 3).join(', ')),
+    // Misma regla que la API (`selectionLabelOf`): suite, «N casos» o «Etiquetas …».
+    selectionLabel: opts.selectionLabel ?? (opts.suite ? `Suite ${opts.suite.name}` : `${opts.caseList.length} ${opts.caseList.length === 1 ? 'caso' : 'casos'}`),
     results,
     attempts,
     caseResults,
@@ -641,7 +642,7 @@ for (let d = 30; d >= 1; d--) {
     runs.push(makeRun({ caseList: fixedCases([1310, 1311, 1312]), env: STAGING, trigger: 'programada', by: null, at: at + 22 * HOUR, suite: regOC, scheduleName: 'Regresión nocturna OC' }));
 }
 // Las 6 de la captura 10 (más recientes primero al ordenar).
-runs.push(makeRun({ caseList: fixedCases([1310, 1311, 1312]), env: STAGING, trigger: 'manual', by: ana, at: NOW - 26 * HOUR, status: 'cancelada', plan: ['pasado', 'cancelado', 'cancelado'], selectionLabel: '@oc' }));
+runs.push(makeRun({ caseList: fixedCases([1310, 1311, 1312]), env: STAGING, trigger: 'manual', by: ana, at: NOW - 26 * HOUR, status: 'cancelada', plan: ['pasado', 'cancelado', 'cancelado'], selectionLabel: 'Etiquetas @oc' }));
 runs.push(makeRun({ caseList: fixedCases([1201, 1310, 1420, 1502]), env: PROD, trigger: 'programada', by: null, at: NOW - 14 * HOUR, suite: humo, scheduleName: 'Humo mañana', plan: ['pasado', 'pasado', 'pasado'] }));
 runs.push(makeRun({ caseList: fixedCases([1501, 1502]), env: STAGING, trigger: 'manual', by: luis, at: NOW - 6 * HOUR, plan: ['fallido'], retries: 1 }));
 runs.push(makeRun({ caseList: fixedCases([1202, 1501]), env: PROD, trigger: 'programada', by: null, at: NOW - 3.5 * HOUR, suite: perfSuite, scheduleName: 'Rendimiento horario laboral', plan: ['inestable', 'pasado'] }));

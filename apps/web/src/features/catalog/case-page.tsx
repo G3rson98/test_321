@@ -263,7 +263,7 @@ function LinkedTests({ kase, selectedTestId, onSelect }: { kase: CaseDetail; sel
           <Suspense fallback={<Skeleton className="m-5 h-40" />}>
             <CodeViewer code={manifestSnippet(t)} className="min-h-[196px]" />
           </Suspense>
-          {/* PENDIENTE [WEB→API-A]: `GET /tests/:id/source` (código sanitizado del commit aprobado). */}
+          {/* PENDIENTE [WEB→API-A2]: `GET /tests/:id/source` (código sanitizado del commit aprobado). */}
           <p className="border-t border-border px-5 py-2 text-[12.5px] text-muted-foreground">Metadatos del manifiesto. El código fuente completo se revisa en el repositorio de qa-tests.</p>
         </>
       ) : null}

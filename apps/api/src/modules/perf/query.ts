@@ -17,8 +17,10 @@ import {
   normalizeScreenKey,
   seriesKey,
   MAX_POINTS_PER_SERIES,
+  MIN_COMPLETED_FOR_P95,
   type IntervalAggregate,
   type PerfGranularity,
+  type PerfPeriodSummary,
   type PerfPoint,
   type PerfQuery,
   type SeriesDimensions,
@@ -26,6 +28,7 @@ import {
 import { apiCSettings } from '../recordings/settings.js';
 import {
   aggregateFilterSql,
+  COMPLETED_SQL,
   HTTP_ERROR_SQL,
   intervalFor,
   pointFromRaw,
@@ -46,6 +49,7 @@ export interface PerfSeriesOut {
   key: SeriesDimensions;
   points: PerfPoint[];
   comparison: PerfPoint[] | null;
+  summary?: PerfPeriodSummary;
 }
 
 export interface PerfResponseOut {
@@ -219,6 +223,46 @@ export async function seriesPoints(
   return out;
 }
 
+/**
+ * Resumen del PERÍODO completo por serie (WEB→API-C): p95 por rango sobre las muestras crudas de `[from, to)` (nunca
+ * recombinando p95 por intervalo) y promedios de bytes. Si el período empieza antes de la retención de crudos el
+ * p95 es `no_disponible` y los bytes `null` (los agregados horarios no los conservan).
+ */
+export async function periodSummaries(
+  db: Db,
+  f: SeriesFilter,
+  from: Date,
+  to: Date,
+  now: Date,
+): Promise<Map<string, PerfPeriodSummary>> {
+  const out = new Map<string, PerfPeriodSummary>();
+  const rawFrom = rawRetentionStart(now);
+  if (from < rawFrom) {
+    // Completadas y p95 no disponibles: se conservan solo métricas agregadas (sin percentiles ni bytes).
+    return out;
+  }
+  const rows = await db.$queryRaw<(SeriesDimsRow & { completed: number; p95_ms: number | null; avg_wire: number | null; avg_body: number | null })[]>`
+    SELECT ${SERIES_COLUMNS},
+      count(*) FILTER (WHERE ${COMPLETED_SQL})::int AS completed,
+      (percentile_disc(0.95) WITHIN GROUP (ORDER BY total_ms) FILTER (WHERE ${COMPLETED_SQL}))::float8 AS p95_ms,
+      (avg(bytes_wire) FILTER (WHERE ${COMPLETED_SQL} AND bytes_wire IS NOT NULL))::float8 AS avg_wire,
+      (avg(bytes_body) FILTER (WHERE ${COMPLETED_SQL} AND bytes_body IS NOT NULL))::float8 AS avg_body
+    FROM perf_sample
+    WHERE ${rawFilterSql(f)} AND ts >= ${from} AND ts < ${to}
+    GROUP BY ${SERIES_GROUP}`;
+  for (const r of rows) {
+    const ok = r.completed >= MIN_COMPLETED_FOR_P95;
+    out.set(seriesKey(dimsOf(r)), {
+      completed: r.completed,
+      p95Ms: ok ? r.p95_ms : null,
+      p95Status: ok ? 'ok' : 'muestra_insuficiente',
+      avgBytesWire: r.avg_wire,
+      avgBytesBody: r.avg_body,
+    });
+  }
+  return out;
+}
+
 async function lastSampleAt(db: Db, f: SeriesFilter): Promise<Date | null> {
   const raw = await db.$queryRaw<{ last: Date | null }[]>`
     SELECT max(ts) AS last FROM perf_sample WHERE ${rawFilterSql(f)}`;
@@ -309,13 +353,19 @@ export async function getPerf(db: Db, q: PerfQuery, now = new Date()): Promise<P
     previous = await seriesPoints(db, f, new Date(from.getTime() - d), from, g, now);
   }
   const keys = [...new Set([...current.keys(), ...(previous?.keys() ?? [])])].sort().slice(0, MAX_SERIES_PER_QUERY);
+  const summaries = await periodSummaries(db, f, from, to, now);
+  const outOfRetention = from < rawRetentionStart(now);
   const series: PerfSeriesOut[] = keys.map((k) => {
     const cur = current.get(k);
     const prev = previous?.get(k);
+    const summary: PerfPeriodSummary | undefined = outOfRetention
+      ? { completed: (cur?.points ?? []).reduce((a, p) => a + p.completed, 0), p95Ms: null, p95Status: 'no_disponible', avgBytesWire: null, avgBytesBody: null }
+      : (summaries.get(k) ?? (cur ? { completed: 0, p95Ms: null, p95Status: 'muestra_insuficiente', avgBytesWire: null, avgBytesBody: null } : undefined));
     return {
       key: (cur ?? prev)!.dims,
       points: (cur?.points ?? []).slice(0, MAX_POINTS_PER_SERIES),
       comparison: previous ? (prev?.points ?? []).slice(0, MAX_POINTS_PER_SERIES) : null,
+      ...(summary ? { summary } : {}),
     };
   });
   const marks = await db.eventMark.findMany({

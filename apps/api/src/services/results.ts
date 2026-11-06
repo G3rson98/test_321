@@ -48,7 +48,6 @@ import type {
   WorkerResultResponseSchema,
 } from '@katalyst/shared';
 import type { Principal } from '../lib/auth.js';
-import { recordAudit } from '../lib/audit.js';
 import { publishEvent, runInTransaction } from '../lib/events-publish.js';
 import { releaseRunCapacity, releaseShardCapacity } from './capacity.js';
 import { validateLease } from './leases.js';
@@ -137,6 +136,16 @@ export async function countsFor(
   return { results, cases };
 }
 
+/** Etiqueta legible de la selección congelada en el snapshot (suite, N casos o etiquetas). */
+export function selectionLabelOf(snapshot: unknown, suiteName: string | null): string | null {
+  const sel = (snapshot as { selection?: { kind?: string; caseIds?: unknown; tags?: unknown } } | null)?.selection;
+  if (!sel) return suiteName;
+  if (sel.kind === 'suite') return suiteName ? `Suite ${suiteName}` : 'Suite';
+  if (sel.kind === 'cases' && Array.isArray(sel.caseIds)) return `${sel.caseIds.length} ${sel.caseIds.length === 1 ? 'caso' : 'casos'}`;
+  if (sel.kind === 'tags' && Array.isArray(sel.tags)) return `Etiquetas ${sel.tags.join(', ')}`;
+  return null;
+}
+
 export function toRunSummary(
   r: RunRow,
   counts: StatusCounts,
@@ -159,6 +168,7 @@ export function toRunSummary(
     suiteName: r.suite?.name ?? null,
     scheduleId: r.scheduleId,
     scheduleName: r.schedule?.name ?? null,
+    selectionLabel: selectionLabelOf(r.selectionSnapshot, r.suite?.name ?? null),
     counts,
     caseCounts,
     scheduledFor: r.scheduledFor?.toISOString() ?? null,

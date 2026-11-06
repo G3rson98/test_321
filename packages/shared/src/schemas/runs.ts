@@ -223,6 +223,8 @@ export const RunSummarySchema = z.object({
     no_ejecutado: z.number().int().nonnegative(),
     pendiente: z.number().int().nonnegative(),
   }),
+  /** WEB→API-B: etiqueta legible de la selección ("12 casos", "Etiquetas @humo, @oc", nombre de la suite). */
+  selectionLabel: z.string().nullable().optional(),
   scheduledFor: IsoDateTimeSchema.nullable(),
   queuedAt: IsoDateTimeSchema,
   startedAt: IsoDateTimeSchema.nullable(),
@@ -362,6 +364,39 @@ export const RunListQuerySchema = CursorQuerySchema.extend({
   sort: sortQuerySchema(['createdAt', 'finishedAt'] as const, '-createdAt'),
 });
 export type RunListQuery = z.infer<typeof RunListQuerySchema>;
+
+/** `GET /runs/summary` (WEB→API-B): KPIs del inicio calculados en servidor, sin la cota de página. */
+export const HomeSummaryQuerySchema = z.object({
+  /** Inicio del día local del cliente (ISO); por defecto, 00:00 UTC. */
+  todayFrom: IsoDateTimeSchema.optional(),
+});
+export type HomeSummaryQuery = z.infer<typeof HomeSummaryQuerySchema>;
+
+export const HomeSummarySchema = z.object({
+  generatedAt: IsoDateTimeSchema,
+  /** Corridas `terminada` con resultado en los últimos 7 días y en los 7 anteriores (pasado + inestable / total). */
+  successRate: z.object({
+    current: z.number().min(0).max(1).nullable(),
+    previous: z.number().min(0).max(1).nullable(),
+    currentRuns: z.number().int().nonnegative(),
+    previousRuns: z.number().int().nonnegative(),
+  }),
+  /** Corridas creadas desde `todayFrom`. */
+  runsToday: z.number().int().nonnegative(),
+  /** Corridas en estados activos (en cola, preparando, corriendo, finalizando, cancelando). */
+  running: z.number().int().nonnegative(),
+  /** Próximas programaciones activas (≤ 3); vacío si el actor no tiene `schedules.read`. */
+  upcoming: z.array(
+    z.object({
+      scheduleId: UuidSchema,
+      name: z.string(),
+      environmentId: UuidSchema,
+      environmentName: z.string(),
+      at: IsoDateTimeSchema,
+    }),
+  ),
+});
+export type HomeSummary = z.infer<typeof HomeSummarySchema>;
 
 export const RunResultListQuerySchema = CursorQuerySchema.extend({
   status: z.union([RunResultStatusSchema, z.array(RunResultStatusSchema)]).optional(),

@@ -1,17 +1,20 @@
 /**
- * Resumen por serie del período, derivado de `GET /perf` (no existe `/perf/summary` en la API). La media se pondera
- * por respuestas completadas; el p95 del período NO se puede recombinar desde p95 por intervalo, así que se muestra el
- * peor p95 por intervalo (rotulado así) y "muestra insuficiente" si ningún intervalo alcanza el mínimo.
- * PENDIENTE [WEB→API-C]: p95 del período sobre muestras crudas y bytes en red/descomprimidos por serie.
+ * Resumen por serie del período, a partir de `GET /perf`. La media se pondera por respuestas completadas. El p95 del
+ * período completo y los bytes promedio los calcula el servidor sobre muestras crudas (`series[].summary`, D-054):
+ * el panel nunca recombina p95 por intervalo.
  */
 import type { PerfResponse, PerfSeriesKey, PerfThreshold } from '@/lib/api/types';
 
 export interface PerfSummaryRow {
   key: PerfSeriesKey;
   meanMs: number | null;
-  /** Peor p95 por intervalo del período. */
+  /** p95 del período completo (muestras crudas, calculado por la API). */
   p95Ms: number | null;
   p95Status: 'ok' | 'muestra_insuficiente' | 'no_disponible';
+  /** Promedio de bytes en red (comprimidos) por respuesta; `null` sin datos o fuera de la retención de crudos. */
+  avgBytesWire: number | null;
+  /** Promedio de bytes descomprimidos por respuesta. */
+  avgBytesBody: number | null;
   maxMs: number | null;
   completed: number;
   started: number;
@@ -35,21 +38,19 @@ export function summarizePerf(resp: PerfResponse | undefined, thresholds: readon
     const completed = pts.reduce((a, p) => a + p.completed, 0);
     const weighted = pts.reduce((a, p) => (p.meanMs !== null ? a + p.meanMs * p.completed : a), 0);
     const withMean = pts.reduce((a, p) => (p.meanMs !== null ? a + p.completed : a), 0);
-    const p95s = pts.filter((p) => p.p95Status === 'ok' && p.p95Ms !== null).map((p) => p.p95Ms!);
     const maxes = pts.map((p) => p.maxMs).filter((x): x is number => x !== null);
-    const status: PerfSummaryRow['p95Status'] = p95s.length
-      ? 'ok'
-      : pts.length > 0 && pts.every((p) => p.p95Status === 'no_disponible')
-        ? 'no_disponible'
-        : 'muestra_insuficiente';
+    const period = s.summary;
+    const status: PerfSummaryRow['p95Status'] = period?.p95Status ?? 'muestra_insuficiente';
     const id = seriesId(s.key);
     const threshold =
       thresholds.find((t) => t.enabled && t.metric === 'p95' && t.environmentId === s.key.environmentId && seriesId(t.seriesSelector) === id) ?? null;
     return {
       key: s.key,
       meanMs: withMean > 0 ? Math.round(weighted / withMean) : null,
-      p95Ms: p95s.length ? Math.max(...p95s) : null,
+      p95Ms: period?.p95Ms ?? null,
       p95Status: status,
+      avgBytesWire: period?.avgBytesWire ?? null,
+      avgBytesBody: period?.avgBytesBody ?? null,
       maxMs: maxes.length ? Math.max(...maxes) : null,
       completed,
       started: pts.reduce((a, p) => a + p.started, 0),
