@@ -222,3 +222,4 @@ en Windows 11; enmascaramiento visual de capturas no implementado (capturas desh
 | [`docs/ui-capturas.md`](docs/ui-capturas.md) | Análisis de pantallas del panel |
 | [`docs/aceptacion/`](docs/aceptacion/) | Actas: extremo a extremo local, seguridad (gitleaks + canarios), rendimiento de API, backup |
 | [`qa-tests/README.md`](qa-tests/README.md), [`apps/recorder/README.md`](apps/recorder/README.md), [`infra/terraform/README.md`](infra/terraform/README.md) | Guías por componente |
+# test_321
